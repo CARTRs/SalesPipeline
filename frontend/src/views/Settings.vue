@@ -136,6 +136,50 @@
         <div v-else class="text-subtle">加载中...</div>
       </el-card>
     </el-tab-pane>
+
+    <!-- === 钉钉配置 === -->
+    <el-tab-pane label="钉钉配置" name="dingtalk">
+      <el-card shadow="never">
+        <el-form label-position="top" style="max-width:600px">
+          <el-form-item label="启用钉钉通知">
+            <el-switch v-model="dingtalkCfg.enabled" />
+          </el-form-item>
+          <el-form-item label="Webhook URL">
+            <el-input v-model="dingtalkCfg.webhook_url" placeholder="https://oapi.dingtalk.com/robot/send?access_token=..." />
+            <div style="font-size:12px;color:var(--ds-text-subtle);margin-top:4px">在钉钉群设置 → 智能群助手 → 添加自定义机器人 获取</div>
+          </el-form-item>
+          <el-form-item label="签名密钥（可选）">
+            <el-input v-model="dingtalkCfg.secret" type="password" show-password placeholder="SEC..." />
+            <div style="font-size:12px;color:var(--ds-text-subtle);margin-top:4px">如果机器人设置了"加签"安全方式，请填写密钥</div>
+          </el-form-item>
+
+          <h3 style="margin:24px 0 16px;font-size:15px">通知场景</h3>
+          <el-form-item label="进度更新通知">
+            <el-switch v-model="dingtalkCfg.notify_progress_update" />
+          </el-form-item>
+          <el-form-item label="AI 风险预警">
+            <el-switch v-model="dingtalkCfg.notify_ai_alert" />
+          </el-form-item>
+          <el-form-item label="优先级变更通知">
+            <el-switch v-model="dingtalkCfg.notify_priority_change" />
+          </el-form-item>
+          <el-form-item label="招标临近提醒">
+            <el-switch v-model="dingtalkCfg.notify_bid_approach" />
+          </el-form-item>
+          <el-form-item label="超期未推进预警">
+            <el-switch v-model="dingtalkCfg.notify_no_push_warn" />
+          </el-form-item>
+          <el-form-item label="周度待更新提醒">
+            <el-switch v-model="dingtalkCfg.notify_weekly_remind" />
+          </el-form-item>
+
+          <div style="display:flex;gap:12px;margin-top:20px">
+            <el-button type="primary" @click="saveDingtalkConfig" :loading="savingDingtalk">保存钉钉配置</el-button>
+            <el-button @click="testDingtalk" :loading="testingDingtalk">测试连接</el-button>
+          </div>
+        </el-form>
+      </el-card>
+    </el-tab-pane>
   </el-tabs>
 
   <!-- User dialog -->
@@ -152,6 +196,9 @@
       </el-form-item>
       <el-form-item label="邮箱" prop="email">
         <el-input v-model="userForm.email" placeholder="必填，用于接收邮件通知" />
+      </el-form-item>
+      <el-form-item label="手机号" prop="phone">
+        <el-input v-model="userForm.phone" placeholder="必填，用于钉钉群@提醒" />
       </el-form-item>
       <el-form-item label="角色" prop="role">
         <el-select v-model="userForm.role" style="width:100%">
@@ -187,6 +234,8 @@ const savingUser = ref(false)
 const savingAi = ref(false)
 const savingEmail = ref(false)
 const savingTpl = ref(false)
+const savingDingtalk = ref(false)
+const testingDingtalk = ref(false)
 const schedulerStatus = ref(null)
 const userFormRef = ref(null)
 const userForm = reactive({})
@@ -368,6 +417,76 @@ async function resetCurrentTemplate() {
   } catch { /* cancelled */ }
 }
 
+/* ============ 钉钉配置 ============ */
+const dingtalkCfg = reactive({
+  enabled: false,
+  webhook_url: '',
+  secret: '',
+  notify_progress_update: true,
+  notify_ai_alert: true,
+  notify_priority_change: true,
+  notify_bid_approach: true,
+  notify_no_push_warn: true,
+  notify_weekly_remind: true,
+})
+
+async function loadDingtalkConfig() {
+  try {
+    const res = await http.get('/configs')
+    const data = res.data
+    if (data.dingtalk_enabled !== undefined) dingtalkCfg.enabled = data.dingtalk_enabled === 'true'
+    if (data.dingtalk_webhook_url !== undefined) dingtalkCfg.webhook_url = data.dingtalk_webhook_url || ''
+    if (data.dingtalk_secret !== undefined) dingtalkCfg.secret = data.dingtalk_secret || ''
+    if (data.dingtalk_notify_types !== undefined) {
+      try {
+        const types = JSON.parse(data.dingtalk_notify_types)
+        dingtalkCfg.notify_progress_update = types.includes('progress_update')
+        dingtalkCfg.notify_ai_alert = types.includes('ai_alert')
+        dingtalkCfg.notify_priority_change = types.includes('priority_change')
+        dingtalkCfg.notify_bid_approach = types.includes('bid_approach')
+        dingtalkCfg.notify_no_push_warn = types.includes('no_push_warn')
+        dingtalkCfg.notify_weekly_remind = types.includes('weekly_remind')
+      } catch { /* use defaults */ }
+    }
+  } catch { /* use defaults */ }
+}
+
+async function saveDingtalkConfig() {
+  savingDingtalk.value = true
+  try {
+    const notifyTypes = []
+    if (dingtalkCfg.notify_progress_update) notifyTypes.push('progress_update')
+    if (dingtalkCfg.notify_ai_alert) notifyTypes.push('ai_alert')
+    if (dingtalkCfg.notify_priority_change) notifyTypes.push('priority_change')
+    if (dingtalkCfg.notify_bid_approach) notifyTypes.push('bid_approach')
+    if (dingtalkCfg.notify_no_push_warn) notifyTypes.push('no_push_warn')
+    if (dingtalkCfg.notify_weekly_remind) notifyTypes.push('weekly_remind')
+
+    const configs = [
+      { config_key: 'dingtalk_enabled', config_value: dingtalkCfg.enabled ? 'true' : 'false' },
+      { config_key: 'dingtalk_webhook_url', config_value: dingtalkCfg.webhook_url },
+      { config_key: 'dingtalk_secret', config_value: dingtalkCfg.secret },
+      { config_key: 'dingtalk_notify_types', config_value: JSON.stringify(notifyTypes) },
+    ]
+    await http.put('/configs', { configs })
+    ElMessage.success('钉钉配置已保存')
+  } finally {
+    savingDingtalk.value = false
+  }
+}
+
+async function testDingtalk() {
+  testingDingtalk.value = true
+  try {
+    await http.post('/configs/dingtalk/test')
+    ElMessage.success('钉钉机器人连接测试成功')
+  } catch (err) {
+    ElMessage.error('测试失败：' + (err.response?.data?.detail || err.message))
+  } finally {
+    testingDingtalk.value = false
+  }
+}
+
 /* ============ 用户管理 ============ */
 const userRules = {
   username: [{ required: true, message: '请输入账号', trigger: 'blur' }],
@@ -390,6 +509,7 @@ const userRules = {
     { required: true, message: '请输入邮箱地址', trigger: 'blur' },
     { type: 'email', message: '邮箱格式不正确', trigger: 'blur' },
   ],
+  phone: [{ required: true, message: '请输入手机号（用于钉钉@）', trigger: 'blur' }],
   role: [{ required: true, message: '请选择角色', trigger: 'change' }],
 }
 
@@ -451,6 +571,7 @@ onMounted(() => {
   loadAiConfig()
   loadEmailConfig()
   loadEmailTemplates()
+  loadDingtalkConfig()
   loadScheduler()
 })
 </script>

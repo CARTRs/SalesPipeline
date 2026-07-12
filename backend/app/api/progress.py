@@ -269,6 +269,10 @@ async def _send_risk_alert(opportunity_id: int, analysis_result: dict, db: Async
 
         await db.flush()
         logger.info(f"邮件发送: 商机 {opportunity_id} 邮件日志已保存")
+
+        # 钉钉通知
+        from app.services.dingtalk_service import notify_ai_alert
+        await notify_ai_alert(opportunity_id, analysis_result, db)
     except Exception as e:
         logger.exception(f"AI 风险预警邮件发送失败 (opportunity={opportunity_id}): {e}")
 
@@ -343,6 +347,10 @@ async def _notify_progress_update(
                 db.add(log)
 
             await db.flush()
+
+            # 钉钉通知
+            from app.services.dingtalk_service import notify_progress_update
+            await notify_progress_update(opportunity_id, current_user_id, progress_content, db)
     except Exception as e:
         import logging
         logging.getLogger(__name__).warning(

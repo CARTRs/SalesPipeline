@@ -193,6 +193,7 @@ class SchedulerService:
                     director_map[uid]["opportunities"].append(opp)
 
                 from app.services.email_service import send_email, render_template
+                from app.services.dingtalk_service import notify_weekly_remind
 
                 sent_count = 0
                 today_str = date.today().isoformat()
@@ -217,6 +218,9 @@ class SchedulerService:
                     )
                     if await send_email(user.email, subject, body, db):
                         sent_count += 1
+
+                    # 钉钉通知
+                    await notify_weekly_remind(uid, opp_list, db)
 
                 logger.info("周提醒邮件已发送: %d 人", sent_count)
                 return {
@@ -260,6 +264,7 @@ class SchedulerService:
                     return {"task": "bid_approach_check", "count": 0, "detail": "无临近招标商机"}
 
                 from app.services.email_service import send_email, render_template
+                from app.services.dingtalk_service import notify_bid_approach
 
                 sent_count = 0
                 for opp in opportunities:
@@ -280,6 +285,9 @@ class SchedulerService:
                         )
                         if await send_email(user.email, subject, body, db):
                             sent_count += 1
+
+                    # 钉钉通知
+                    await notify_bid_approach(opp.id, remaining_days, db)
 
                 return {
                     "task": "bid_approach_check",
@@ -318,6 +326,7 @@ class SchedulerService:
                     return {"task": "no_push_warn", "count": 0, "detail": "无新的超期未推进商机"}
 
                 from app.services.email_service import send_email, render_template
+                from app.services.dingtalk_service import notify_no_push_warn
 
                 sent_count = 0
                 for opp in opportunities:
@@ -337,6 +346,9 @@ class SchedulerService:
                         )
                         if await send_email(user.email, subject, body, db):
                             sent_count += 1
+
+                    # 钉钉通知
+                    await notify_no_push_warn(opp.id, opp.no_push_days or 0, db)
 
                     # 标记已预警，避免重复发送
                     opp.no_push_flag = 1
@@ -403,6 +415,10 @@ class SchedulerService:
                 db.add(log)
 
             await db.flush()
+
+            # 钉钉通知
+            from app.services.dingtalk_service import notify_priority_change
+            await notify_priority_change(opp.id, old_priority, new_priority, reason, db)
         except Exception as e:
             import logging
             logging.getLogger(__name__).warning(

@@ -19,7 +19,7 @@ class UserCreate(BaseModel):
     password: str
     real_name: str
     email: str  # required
-    phone: Optional[str] = None
+    phone: str  # required for DingTalk @
     role: str = "项目经理"
     department: Optional[str] = None
 
@@ -57,7 +57,7 @@ class UserResponse(BaseModel):
     username: str
     real_name: str
     email: str
-    phone: Optional[str] = None
+    phone: str
     role: Optional[str] = None
     department: Optional[str] = None
     is_active: bool

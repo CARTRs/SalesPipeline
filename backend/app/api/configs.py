@@ -83,3 +83,14 @@ async def get_email_template_blueprints():
     from app.services.email_service import TEMPLATE_BLUEPRINTS
 
     return {"blueprints": TEMPLATE_BLUEPRINTS}
+
+
+@router.post("/dingtalk/test")
+async def test_dingtalk(db: AsyncSession = Depends(get_db)):
+    """测试钉钉机器人连接"""
+    from app.services.dingtalk_service import test_dingtalk_connection
+
+    result = await test_dingtalk_connection(db)
+    if not result["success"]:
+        raise HTTPException(status_code=400, detail=result["message"])
+    return {"message": result["message"]}

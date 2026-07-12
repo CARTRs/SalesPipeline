@@ -11,7 +11,7 @@ class User(Base):
     username = Column(String(50), unique=True, nullable=False, comment="登录账号")
     real_name = Column(String(50), nullable=False, comment="真实姓名")
     email = Column(String(100), nullable=False, comment="邮箱地址")
-    phone = Column(String(20), comment="手机号")
+    phone = Column(String(20), nullable=False, comment="手机号（用于钉钉@）")
     role = Column(
         String(20),
         comment="角色：项目经理/客户经理/责任支局长/管理员",
