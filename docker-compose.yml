@@ -1,0 +1,74 @@
+services:
+  postgres:
+    image: postgres:14
+    environment:
+      POSTGRES_USER: sjxt
+      POSTGRES_PASSWORD: ${DB_PASSWORD:-sjxt}
+      POSTGRES_DB: opportunity_db
+    ports:
+      - "5433:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U sjxt -d opportunity_db"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    restart: unless-stopped
+    networks:
+      - sjxt_network
+
+  redis:
+    image: redis:7-alpine
+    ports:
+      - "6380:6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    restart: unless-stopped
+    networks:
+      - sjxt_network
+
+  backend:
+    build: ./backend
+    ports:
+      - "8080:8000"
+    environment:
+      DATABASE_URL: postgresql+asyncpg://sjxt:${DB_PASSWORD:-sjxt}@postgres:5432/opportunity_db
+      REDIS_URL: redis://redis:6379/0
+      JWT_SECRET: ${JWT_SECRET:-change-me-in-production}
+      DEEPSEEK_API_KEY: ${DEEPSEEK_API_KEY:-}
+      DEEPSEEK_API_URL: https://api.deepseek.com/chat/completions
+      SMTP_HOST: ${SMTP_HOST:-}
+      SMTP_PORT: ${SMTP_PORT:-465}
+      SMTP_USER: ${SMTP_USER:-}
+      SMTP_PASS: ${SMTP_PASS:-}
+      EMAIL_SENDER: ${EMAIL_SENDER:-}
+      DEBUG: "false"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    restart: unless-stopped
+    networks:
+      - sjxt_network
+
+  frontend:
+    build: ./frontend
+    ports:
+      - "3000:80"
+    depends_on:
+      - backend
+    restart: unless-stopped
+    networks:
+      - sjxt_network
+
+networks:
+  sjxt_network:
+    driver: bridge
+
+volumes:
+  postgres_data:

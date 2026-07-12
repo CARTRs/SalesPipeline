@@ -1,0 +1,16 @@
+var(--ds-text): #172B4D;
+var(--ds-text-subtle): #5E6C84;
+var(--ds-text-link): #0052CC;
+
+$el-font-path: '~element-plus/theme-chalk/fonts';
+
+// Override Element Plus SCSS variables
+$--color-primary: #0052CC;
+$--color-success: #36B37E;
+$--color-warning: #FFAB00;
+$--color-danger: #DE350B;
+$--color-info: #00B8D9;
+$--border-radius-base: 3px;
+$--font-path: '~element-plus/theme-chalk/fonts';
+
+@use 'element-plus/theme-chalk/src/index.scss' as *;
