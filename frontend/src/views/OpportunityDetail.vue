@@ -88,6 +88,15 @@
                     <span class="timeline-role-tag" :class="roleColor(item.updater_role)">{{ item.updater_role }}</span>
                     <span class="timeline-author">{{ item.updater_name || '用户' }}</span>
                     <span class="timeline-time">{{ item.progress_date }}</span>
+                    <el-popconfirm
+                      v-if="isAdmin"
+                      title="确定删除这条进度记录？"
+                      @confirm="deleteProgress(item.id)"
+                    >
+                      <template #reference>
+                        <el-button link type="danger" size="small" style="margin-left:8px">删除</el-button>
+                      </template>
+                    </el-popconfirm>
                   </div>
                   <div class="timeline-body">{{ item.progress_content }}</div>
                 </div>
@@ -190,6 +199,8 @@ const progressList = ref([])
 const emailStatus = ref({ has_sent: false, last_sent_at: null })
 let pollTimer = null
 
+const isAdmin = computed(() => localStorage.getItem('user_role') === '管理员')
+
 const progressForm = ref({
   progress_content: '',
   progress_date: new Date().toISOString().slice(0, 10),
@@ -266,6 +277,14 @@ async function submitProgress() {
   } finally {
     submitting.value = false
   }
+}
+
+async function deleteProgress(progressId) {
+  try {
+    await http.delete(`/opportunities/${route.params.id}/progress/${progressId}`)
+    ElMessage.success('进度已删除')
+    await loadProgress()
+  } catch { /* error already handled by interceptor */ }
 }
 
 function startPolling() {

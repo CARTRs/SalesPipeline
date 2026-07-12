@@ -71,6 +71,12 @@ async function handleLogin() {
   try {
     const res = await authApi.login(form)
     localStorage.setItem('token', res.data.access_token)
+    // Decode JWT to get user info (payload is base64url encoded)
+    try {
+      const payload = JSON.parse(atob(res.data.access_token.split('.')[1]))
+      localStorage.setItem('user_role', payload.role || '')
+      localStorage.setItem('user_name', payload.real_name || '')
+    } catch { /* ignore decode errors */ }
     router.push('/')
   } finally {
     loading.value = false

@@ -396,3 +396,28 @@ async def update_progress(
 
     await db.flush()
     return ProgressResponse.model_validate(prog)
+
+
+@router.delete("/{opportunity_id}/progress/{progress_id}", status_code=status.HTTP_204_NO_CONTENT)
+async def delete_progress(
+    opportunity_id: int,
+    progress_id: int,
+    current_user: dict = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """删除进度记录（仅管理员可操作）"""
+    if current_user.get("role") != "管理员":
+        raise HTTPException(status_code=403, detail="仅管理员可删除进度记录")
+
+    result = await db.execute(
+        select(OpportunityProgress).where(
+            OpportunityProgress.id == progress_id,
+            OpportunityProgress.opportunity_id == opportunity_id,
+        )
+    )
+    prog = result.scalar_one_or_none()
+    if not prog:
+        raise HTTPException(status_code=404, detail="进度记录不存在")
+
+    await db.delete(prog)
+    await db.flush()
