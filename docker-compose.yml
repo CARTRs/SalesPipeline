@@ -66,6 +66,22 @@ services:
     networks:
       - sjxt_network
 
+  mcp-server:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile.mcp
+    ports:
+      - "8090:8090"
+    environment:
+      DATABASE_URL: postgresql+asyncpg://sjxt:${DB_PASSWORD:-sjxt}@postgres:5432/opportunity_db
+      REDIS_URL: redis://redis:6379/0
+      JWT_SECRET: ${JWT_SECRET:-change-me-in-production}
+    depends_on:
+      - backend
+    restart: unless-stopped
+    networks:
+      - sjxt_network
+
 networks:
   sjxt_network:
     driver: bridge
