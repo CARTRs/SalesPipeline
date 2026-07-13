@@ -5,7 +5,7 @@ MCP Agent API — 供外部 Agent 调用的接口
 from datetime import date, datetime
 from typing import Optional
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, status
 from pydantic import BaseModel
 from sqlalchemy import select, func
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -18,6 +18,7 @@ from app.models.opportunity_progress import OpportunityProgress
 from app.models.user import User
 from app.schemas.opportunity import OpportunityResponse, OpportunityListResponse
 from app.schemas.progress import ProgressCreate, ProgressResponse
+from app.api.progress import _build_weekly_progress, _auto_analyze, _notify_progress_update
 
 router = APIRouter(prefix="/api/mcp", tags=["MCP Agent接口"])
 
@@ -287,6 +288,7 @@ class AgentProgressCreate(BaseModel):
 async def agent_create_progress(
     opportunity_id: int,
     data: AgentProgressCreate,
+    background_tasks: BackgroundTasks,
     current_user: dict = Depends(get_agent_user),
     db: AsyncSession = Depends(get_db),
 ):
@@ -322,11 +324,20 @@ async def agent_create_progress(
     await db.refresh(prog)
     await db.refresh(prog, ["updater"])
 
-    # Update opportunity
+    # Update opportunity fields
+    opp.weekly_progress = _build_weekly_progress(opp, prog)
     opp.last_push_date = progress_date
     opp.no_push_days = 0
     opp.no_push_flag = 0
     await db.flush()
+
+    # Trigger AI analysis asynchronously
+    background_tasks.add_task(_auto_analyze, opportunity_id)
+
+    # Notify related people (exclude the submitter)
+    background_tasks.add_task(
+        _notify_progress_update, opportunity_id, user_id, data.progress_content
+    )
 
     return ProgressResponse.model_validate(prog)
 
@@ -383,3 +394,47 @@ async def agent_list_progress(
 async def agent_get_me(current_user: dict = Depends(get_agent_user)):
     """获取当前 Agent 用户信息"""
     return current_user
+
+
+# ---------------------------------------------------------------------------
+# 钉钉直接推送
+# ---------------------------------------------------------------------------
+
+class AgentDingtalkSend(BaseModel):
+    title: str
+    content: str
+    at_mobiles: Optional[list[str]] = None
+    at_all: bool = False
+
+
+@router.post("/dingtalk/send")
+async def agent_send_dingtalk(
+    data: AgentDingtalkSend,
+    current_user: dict = Depends(get_agent_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """直接发送钉钉群机器人消息"""
+    from app.services.dingtalk_service import send_dingtalk_message, _save_dingtalk_log
+
+    success = await send_dingtalk_message(
+        title=data.title,
+        content=data.content,
+        at_mobiles=data.at_mobiles,
+        at_all=data.at_all,
+        db_session=db,
+    )
+
+    await _save_dingtalk_log(
+        db=db,
+        title=data.title,
+        content=data.content,
+        status="sent" if success else "failed",
+        msg_type="agent_direct",
+        opportunity_id=None,
+        at_mobiles=data.at_mobiles,
+    )
+
+    if not success:
+        raise HTTPException(status_code=502, detail="钉钉消息发送失败，请检查 Webhook 配置")
+
+    return {"success": True, "message": "钉钉消息发送成功"}

@@ -1,0 +1,9 @@
+{
+  "mcpServers": {
+    "商机跟踪系统": {
+      "type": "jsonrpc",
+      "url": "http://localhost:8090/mcp",
+      "description": "商机智能跟踪与预警系统 MCP Server"
+    }
+  }
+}

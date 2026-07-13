@@ -102,6 +102,21 @@ TOOLS = [
             "required": ["token", "opportunity_id"]
         }
     },
+    {
+        "name": "sjxt_send_dingtalk",
+        "description": "直接发送钉钉群机器人消息，支持Markdown格式和@提醒",
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "token": {"type": "string", "description": "登录返回的access_token"},
+                "title": {"type": "string", "description": "消息标题"},
+                "content": {"type": "string", "description": "消息内容（Markdown格式）"},
+                "at_mobiles": {"type": "array", "items": {"type": "string"}, "description": "需要@的手机号列表（可选）"},
+                "at_all": {"type": "boolean", "description": "是否@所有人，默认false"}
+            },
+            "required": ["token", "title", "content"]
+        }
+    },
 ]
 
 
@@ -156,12 +171,8 @@ async def list_tools():
     return {"tools": TOOLS}
 
 
-@app.post("/tools/{tool_name}")
-async def call_tool(tool_name: str, request: Request):
-    """调用工具（MCP 标准）"""
-    body = await request.json()
-    arguments = body.get("arguments", body)
-
+async def execute_tool(tool_name: str, arguments: dict) -> dict:
+    """执行工具调用"""
     try:
         if tool_name == "sjxt_login":
             result = await call_backend_api("POST", "/mcp/auth/login", data=arguments)
@@ -190,6 +201,10 @@ async def call_tool(tool_name: str, request: Request):
             opp_id = arguments.pop("opportunity_id")
             result = await call_backend_api("GET", f"/mcp/opportunities/{opp_id}/progress", token=token)
 
+        elif tool_name == "sjxt_send_dingtalk":
+            token = arguments.pop("token", None)
+            result = await call_backend_api("POST", "/mcp/dingtalk/send", token=token, data=arguments)
+
         else:
             result = {"error": f"Unknown tool: {tool_name}"}
 
@@ -214,6 +229,14 @@ async def call_tool(tool_name: str, request: Request):
         }
 
 
+@app.post("/tools/{tool_name}")
+async def call_tool(tool_name: str, request: Request):
+    """调用工具（MCP 标准）"""
+    body = await request.json()
+    arguments = body.get("arguments", body)
+    return await execute_tool(tool_name, arguments)
+
+
 # 兼容 JSON-RPC 格式（部分 MCP 客户端使用）
 @app.post("/mcp")
 async def handle_jsonrpc(request: Request):
@@ -228,9 +251,7 @@ async def handle_jsonrpc(request: Request):
     elif method == "tools/call":
         tool_name = params.get("name")
         arguments = params.get("arguments", {})
-        # 调用工具
-        tool_request = type('Request', (), {'json': lambda: lambda: {'arguments': arguments}})()
-        result = await call_tool(tool_name, tool_request)
+        result = await execute_tool(tool_name, arguments)
         return {"jsonrpc": "2.0", "id": id, "result": result}
     elif method == "initialize":
         return {

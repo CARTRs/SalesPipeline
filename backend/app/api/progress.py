@@ -318,37 +318,37 @@ async def _notify_progress_update(
             # 责任支局长
             if opp.branch_director and opp.branch_director.email and opp.branch_director.id != current_user_id:
                 recipients.append(opp.branch_director)
-            if not recipients:
-                return
 
-            subject, body = render_template(
-                "progress_update",
-                opportunity_name=opp.opportunity_name,
-                updater_name=updater_name,
-                updater_role=updater_role,
-                update_time=datetime.utcnow().strftime("%Y-%m-%d %H:%M"),
-                progress_content=progress_content,
-                system_link="",
-            )
-
-            for user in recipients:
-                success = await send_email(user.email, subject, body, db)
-                log = EmailLog(
-                    opportunity_id=opportunity_id,
-                    recipient_id=user.id,
-                    recipient_email=user.email,
-                    email_type="progress_update",
-                    subject=subject,
-                    content=body,
-                    status="sent" if success else "failed",
-                    sent_at=datetime.utcnow() if success else None,
-                    error_message=None if success else "发送失败",
+            # 邮件通知（有收件人时才发送）
+            if recipients:
+                subject, body = render_template(
+                    "progress_update",
+                    opportunity_name=opp.opportunity_name,
+                    updater_name=updater_name,
+                    updater_role=updater_role,
+                    update_time=datetime.utcnow().strftime("%Y-%m-%d %H:%M"),
+                    progress_content=progress_content,
+                    system_link="",
                 )
-                db.add(log)
 
-            await db.flush()
+                for user in recipients:
+                    success = await send_email(user.email, subject, body, db)
+                    log = EmailLog(
+                        opportunity_id=opportunity_id,
+                        recipient_id=user.id,
+                        recipient_email=user.email,
+                        email_type="progress_update",
+                        subject=subject,
+                        content=body,
+                        status="sent" if success else "failed",
+                        sent_at=datetime.utcnow() if success else None,
+                        error_message=None if success else "发送失败",
+                    )
+                    db.add(log)
 
-            # 钉钉通知
+                await db.flush()
+
+            # 钉钉通知（独立于邮件，始终执行）
             from app.services.dingtalk_service import notify_progress_update
             await notify_progress_update(opportunity_id, current_user_id, progress_content, db)
     except Exception as e:

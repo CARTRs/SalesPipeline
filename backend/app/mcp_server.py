@@ -103,6 +103,21 @@ async def list_tools() -> list[Tool]:
                 "required": ["token", "opportunity_id"]
             }
         ),
+        Tool(
+            name="sjxt_send_dingtalk",
+            description="直接发送钉钉群机器人消息，支持Markdown格式和@提醒",
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "token": {"type": "string", "description": "登录返回的access_token"},
+                    "title": {"type": "string", "description": "消息标题"},
+                    "content": {"type": "string", "description": "消息内容（Markdown格式）"},
+                    "at_mobiles": {"type": "array", "items": {"type": "string"}, "description": "需要@的手机号列表（可选）"},
+                    "at_all": {"type": "boolean", "description": "是否@所有人，默认false"}
+                },
+                "required": ["token", "title", "content"]
+            }
+        ),
     ]
 
 
@@ -169,6 +184,11 @@ async def call_tool(name: str, arguments: dict) -> list[TextContent]:
             token = arguments.pop("token")
             opp_id = arguments.pop("opportunity_id")
             result = await _call_api("GET", f"/mcp/opportunities/{opp_id}/progress", token=token)
+            return [TextContent(type="text", text=json.dumps(result, ensure_ascii=False, indent=2))]
+
+        elif name == "sjxt_send_dingtalk":
+            token = arguments.pop("token")
+            result = await _call_api("POST", "/mcp/dingtalk/send", token=token, data=arguments)
             return [TextContent(type="text", text=json.dumps(result, ensure_ascii=False, indent=2))]
 
         else:

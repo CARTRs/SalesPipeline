@@ -34,12 +34,18 @@ async def seed():
             ("email_smtp_host", "smtp.exmail.qq.com", "SMTP服务器"),
             ("email_smtp_port", "465", "SMTP端口"),
             ("email_sender", "noreply@company.com", "发件人地址"),
+            ("email_smtp_password", "", "SMTP密码"),
             ("weekly_remind_day", "1", "每周提醒日（1=周一）"),
             ("weekly_remind_time", "09:00", "每周提醒时间"),
             ("bid_approach_days", "7", "招标临近预警天数"),
             ("no_push_warn_days", "7", "未推进超期预警天数"),
             ("priority_auto_upgrade", "true", "是否允许AI自动提升优先级"),
             ("ai_analysis_trigger", "on_progress_update", "触发时机"),
+            # 钉钉配置
+            ("dingtalk_enabled", "true", "是否启用钉钉通知"),
+            ("dingtalk_webhook_url", "", "钉钉机器人Webhook地址"),
+            ("dingtalk_secret", "", "钉钉机器人签名密钥"),
+            ("dingtalk_notify_types", '["progress_update","ai_alert","priority_change","bid_approach","no_push_warn","weekly_remind"]', "钉钉通知类型"),
         ]
         for key, value, desc in defaults:
             result = await session.execute(
