@@ -78,7 +78,7 @@ TOOLS = [
     },
     {
         "name": "sjxt_add_progress",
-        "description": "为商机添加进度记录，会触发AI分析和通知",
+        "description": "为商机添加进度记录，会触发AI分析并在结果中返回风险信号、建议操作等AI建议",
         "inputSchema": {
             "type": "object",
             "properties": {
@@ -195,6 +195,17 @@ async def execute_tool(tool_name: str, arguments: dict) -> dict:
             token = arguments.pop("token", None)
             opp_id = arguments.pop("opportunity_id")
             result = await call_backend_api("POST", f"/mcp/opportunities/{opp_id}/progress", token=token, data=arguments)
+            # 将 AI 分析建议提取到顶层，方便 Agent 直接读取
+            if "ai_analysis" in result and result["ai_analysis"]:
+                result["ai_suggestion"] = {
+                    "risk_level": result["ai_analysis"].get("risk_level"),
+                    "risk_signals": result["ai_analysis"].get("risk_signals", []),
+                    "suggested_actions": result["ai_analysis"].get("suggested_actions", []),
+                    "priority_suggestion": result["ai_analysis"].get("priority_suggestion"),
+                    "summary": result["ai_analysis"].get("summary"),
+                    "competitor_detected": result["ai_analysis"].get("competitor_detected", False),
+                    "bid_date_approaching": result["ai_analysis"].get("bid_date_approaching", False),
+                }
 
         elif tool_name == "sjxt_list_progress":
             token = arguments.pop("token", None)

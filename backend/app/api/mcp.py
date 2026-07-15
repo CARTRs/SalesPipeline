@@ -233,6 +233,7 @@ class AgentOpportunityUpdate(BaseModel):
 async def agent_update_opportunity(
     opportunity_id: int,
     data: AgentOpportunityUpdate,
+    background_tasks: BackgroundTasks,
     current_user: dict = Depends(get_agent_user),
     db: AsyncSession = Depends(get_db),
 ):
@@ -272,7 +273,87 @@ async def agent_update_opportunity(
         .where(Opportunity.id == opportunity_id)
     )
     opp = reload.scalar_one()
+
+    # 异步触发 AI 分析
+    background_tasks.add_task(_auto_analyze_on_update, opportunity_id)
+
     return OpportunityResponse.model_validate(opp)
+
+
+async def _auto_analyze_on_update(opportunity_id: int):
+    """商机更新后自动触发 AI 分析（后台任务）"""
+    try:
+        from app.core.database import async_session
+        from app.services.ai_engine import analyze_opportunity_full
+        async with async_session() as session:
+            await analyze_opportunity_full(opportunity_id, session)
+            await session.commit()
+            import logging
+            logging.getLogger(__name__).info(f"MCP商机更新AI分析完成: opportunity_id={opportunity_id}")
+    except Exception as e:
+        import logging
+        logging.getLogger(__name__).exception(f"MCP商机更新AI分析失败 (opportunity={opportunity_id}): {e}")
+
+
+async def _send_risk_alert_sync(opportunity_id: int, analysis_result: dict):
+    """高风险时异步发送预警邮件（MCP 进度同步分析后调用）"""
+    try:
+        from app.core.database import async_session
+        async with async_session() as db:
+            from app.services.email_service import send_email, render_template
+            from app.models.email_log import EmailLog
+
+            row = await db.execute(
+                select(Opportunity)
+                .options(
+                    selectinload(Opportunity.division_member),
+                    selectinload(Opportunity.account_manager),
+                    selectinload(Opportunity.branch_director),
+                )
+                .where(Opportunity.id == opportunity_id)
+            )
+            opp = row.scalar_one_or_none()
+            if not opp:
+                return
+
+            recipients = []
+            if opp.division_member and opp.division_member.email:
+                recipients.append(opp.division_member)
+            if opp.account_manager and opp.account_manager.email:
+                recipients.append(opp.account_manager)
+            if opp.branch_director and opp.branch_director.email:
+                recipients.append(opp.branch_director)
+            if not recipients:
+                return
+
+            subject, body = render_template(
+                "ai_alert",
+                opportunity_name=opp.opportunity_name,
+                customer_name=opp.customer_name,
+                predicted_amount=opp.predicted_amount or "未知",
+                risk_signals=analysis_result.get("risk_signals", []),
+                suggested_actions=analysis_result.get("suggested_actions", []),
+                system_link="",
+            )
+
+            from datetime import datetime
+            for user in recipients:
+                success = await send_email(user.email, subject, body, db)
+                log = EmailLog(
+                    opportunity_id=opportunity_id,
+                    recipient_id=user.id,
+                    recipient_email=user.email,
+                    email_type="ai_alert",
+                    subject=subject,
+                    content=body,
+                    status="sent" if success else "failed",
+                    sent_at=datetime.utcnow() if success else None,
+                )
+                db.add(log)
+            await db.commit()
+    except Exception as e:
+        import logging
+        logging.getLogger(__name__).exception(f"MCP高风险预警邮件发送失败 (opportunity={opportunity_id}): {e}")
 
 
 # ---------------------------------------------------------------------------
@@ -284,7 +365,14 @@ class AgentProgressCreate(BaseModel):
     progress_date: Optional[date] = None
 
 
-@router.post("/opportunities/{opportunity_id}/progress", response_model=ProgressResponse, status_code=status.HTTP_201_CREATED)
+class AgentProgressWithAIResponse(BaseModel):
+    """进度创建结果（含 AI 分析建议）"""
+    progress: ProgressResponse
+    ai_analysis: Optional[dict] = None
+    ai_analysis_error: Optional[str] = None
+
+
+@router.post("/opportunities/{opportunity_id}/progress", response_model=AgentProgressWithAIResponse, status_code=status.HTTP_201_CREATED)
 async def agent_create_progress(
     opportunity_id: int,
     data: AgentProgressCreate,
@@ -292,7 +380,7 @@ async def agent_create_progress(
     current_user: dict = Depends(get_agent_user),
     db: AsyncSession = Depends(get_db),
 ):
-    """为商机添加进度记录"""
+    """为商机添加进度记录，并同步返回 AI 分析建议"""
     query = select(Opportunity).where(Opportunity.id == opportunity_id)
 
     user_role = current_user["role"]
@@ -331,15 +419,49 @@ async def agent_create_progress(
     opp.no_push_flag = 0
     await db.flush()
 
-    # Trigger AI analysis asynchronously
-    background_tasks.add_task(_auto_analyze, opportunity_id)
+    # 同步执行 AI 分析，将结果返回给 Agent
+    ai_result = None
+    ai_error = None
+    try:
+        from app.services.ai_engine import analyze_progress_text
+        # 加载最近进度文本供 AI 分析
+        recent_progress = await db.execute(
+            select(OpportunityProgress)
+            .options(selectinload(OpportunityProgress.updater))
+            .where(OpportunityProgress.opportunity_id == opportunity_id)
+            .order_by(OpportunityProgress.created_at.asc())
+            .limit(10)
+        )
+        records = recent_progress.scalars().all()
+        if records:
+            lines = []
+            for pr in records:
+                date_str = pr.progress_date.isoformat() if pr.progress_date else ""
+                role = pr.updater_role or ""
+                name = pr.updater.real_name if pr.updater else ""
+                lines.append(f"[{date_str}] {role}-{name}: {pr.progress_content}")
+            combined_text = "\n".join(lines)
+            ai_result = await analyze_progress_text(opportunity_id, combined_text, db)
+
+            # 高风险时发送预警邮件（异步）
+            risk_level = ai_result.get("risk_level") or ""
+            if risk_level in ("critical", "high"):
+                background_tasks.add_task(_send_risk_alert_sync, opportunity_id, ai_result)
+    except Exception as e:
+        import logging
+        logging.getLogger(__name__).exception(f"MCP同步AI分析失败 (opportunity={opportunity_id}): {e}")
+        ai_error = str(e)
 
     # Notify related people (exclude the submitter)
     background_tasks.add_task(
         _notify_progress_update, opportunity_id, user_id, data.progress_content
     )
 
-    return ProgressResponse.model_validate(prog)
+    return AgentProgressWithAIResponse(
+        progress=ProgressResponse.model_validate(prog),
+        ai_analysis=ai_result,
+        ai_analysis_error=ai_error,
+    )
 
 
 @router.get("/opportunities/{opportunity_id}/progress")

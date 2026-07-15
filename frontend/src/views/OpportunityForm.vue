@@ -171,12 +171,13 @@ async function handleSave() {
     const payload = { ...form, estimated_sign_date: formatDate(form.estimated_sign_date) }
     if (isEdit.value) {
       await opportunityApi.update(route.params.id, payload)
-      ElMessage.success('更新成功')
+      ElMessage.success('更新成功，AI 分析中...')
+      router.push(`/opportunities/${route.params.id}`)
     } else {
       await opportunityApi.create(payload)
       ElMessage.success('创建成功')
+      router.push('/opportunities')
     }
-    router.push('/opportunities')
   } catch (e) {
     // error message already shown by http interceptor
   } finally {

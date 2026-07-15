@@ -363,6 +363,7 @@ async def create_opportunity(
 async def update_opportunity(
     opportunity_id: int,
     data: OpportunityUpdate,
+    background_tasks: BackgroundTasks,
     db: AsyncSession = Depends(get_db),
     current_user: dict = Depends(get_current_user),
 ):
@@ -401,7 +402,28 @@ async def update_opportunity(
 
     await db.flush()
     await db.refresh(opp)
+
+    # 异步触发 AI 分析
+    background_tasks.add_task(_auto_analyze_on_update, opportunity_id)
+
     return OpportunityResponse.model_validate(opp)
+
+
+async def _auto_analyze_on_update(opportunity_id: int):
+    """商机更新后自动触发 AI 分析（后台任务）"""
+    import logging
+    logger = logging.getLogger(__name__)
+    try:
+        logger.info(f"商机更新AI分析开始: opportunity_id={opportunity_id}")
+        from app.core.database import async_session
+        from app.services.ai_engine import analyze_opportunity_full
+        async with async_session() as session:
+            logger.info(f"商机更新AI分析: 调用analyze_opportunity_full, opportunity_id={opportunity_id}")
+            result = await analyze_opportunity_full(opportunity_id, session)
+            await session.commit()
+            logger.info(f"商机更新AI分析完成: opportunity_id={opportunity_id}, risk_level={result.get('risk_level')}")
+    except Exception as e:
+        logger.exception(f"商机更新AI分析失败 (opportunity={opportunity_id}): {e}")
 
 
 @router.post("/{opportunity_id}/analyze", status_code=status.HTTP_200_OK)

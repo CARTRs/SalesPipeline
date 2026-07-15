@@ -183,7 +183,7 @@
 </template>
 
 <script setup>
-import { ref, computed, onMounted, onUnmounted } from 'vue'
+import { ref, computed, onMounted, onUnmounted, watch } from 'vue'
 import { useRoute } from 'vue-router'
 import { ElMessage } from 'element-plus'
 import http from '../api/http'
@@ -337,6 +337,15 @@ onMounted(() => {
   loadDetail()
   loadProgress()
   loadEmailStatus()
+})
+
+// 当从编辑页面返回时自动刷新数据
+watch(() => route.params.id, (newId, oldId) => {
+  if (newId && newId !== oldId) {
+    loadDetail()
+    loadProgress()
+    loadEmailStatus()
+  }
 })
 
 onUnmounted(() => {
