@@ -16,7 +16,6 @@ class PriorityEvaluateResponse(BaseModel):
     current_priority: int
     suggested_priority: int
     priority_changed: bool
-    priority_score: float
     score_breakdown: dict
     reason: str
     evaluated_at: datetime
@@ -43,7 +42,7 @@ class BatchEvaluateResponse(BaseModel):
 class ManualPriorityAdjustRequest(BaseModel):
     """手动调整优先级请求"""
     opportunity_id: int
-    new_priority: int = Field(..., ge=1, le=4, description="1=紧急 2=高 3=中 4=低")
+    new_priority: int = Field(..., ge=1, le=3, description="1=高 2=中 3=低")
     reason: str = Field(..., min_length=1, max_length=500)
 
 

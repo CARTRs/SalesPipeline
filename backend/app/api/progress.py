@@ -89,9 +89,16 @@ async def list_progress(
     result = await db.execute(query)
     items = result.scalars().all()
 
+    # 构建响应列表，手动添加updater_name
+    progress_list = []
+    for p in items:
+        progress_data = ProgressResponse.model_validate(p)
+        progress_data.updater_name = p.updater.real_name if p.updater else None
+        progress_list.append(progress_data)
+
     return ProgressListResponse(
         total=total,
-        items=[ProgressResponse.model_validate(p) for p in items],
+        items=progress_list,
     )
 
 
@@ -153,7 +160,11 @@ async def create_progress(
         _notify_progress_update, opportunity_id, current_user_id, data.progress_content
     )
 
-    return ProgressResponse.model_validate(prog)
+    # 构建响应，添加updater_name
+    progress_data = ProgressResponse.model_validate(prog)
+    progress_data.updater_name = user.real_name
+
+    return progress_data
 
 
 async def _auto_analyze(opportunity_id: int):

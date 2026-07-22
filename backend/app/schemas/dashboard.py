@@ -15,6 +15,8 @@ class StatsOverview(BaseModel):
     bid_approaching_count: int
     competitor_detected_count: int
     pending_amount: Optional[float] = None
+    weekly_progress_count: int = 0
+    no_push_opportunity_count: int = 0
 
 
 class PriorityItem(BaseModel):
@@ -69,6 +71,9 @@ class BranchStatsItem(BaseModel):
     branch_office: str
     opportunity_count: int
     total_predicted_amount: Optional[Decimal] = None
+    high_count: int = 0    # 高
+    medium_count: int = 0  # 中
+    low_count: int = 0     # 低
 
 
 class BranchStats(BaseModel):

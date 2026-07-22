@@ -4,7 +4,7 @@
       <div class="detail-head">
         <div class="detail-head-left">
           <el-tag :class="'tag-priority-' + opp.priority_level" size="small" effect="dark" round>
-            {{ { 1: '紧急', 2: '高', 3: '中', 4: '低' }[opp.priority_level] }}
+            {{ { 1: '高', 2: '中', 3: '低' }[opp.priority_level] }}
           </el-tag>
           <h1 class="detail-title">{{ opp.opportunity_name }}</h1>
           <el-tag v-if="opp.opportunity_status" size="small" effect="plain" :type="statusType">

@@ -144,6 +144,44 @@ async def get_stats_overview(
     )
     pending_amount = float(pending_amount_result.scalar() or 0)
 
+    # 本周有进度更新的商机数量
+    from datetime import timedelta
+    today = date.today()
+    week_start = today - timedelta(days=today.weekday())  # 本周一
+    week_end = week_start + timedelta(days=6)  # 本周日
+
+    # 查询本周有进度更新的商机ID（去重）
+    weekly_progress_query = (
+        select(func.count(func.distinct(OpportunityProgress.opportunity_id)))
+        .where(
+            OpportunityProgress.progress_date >= week_start,
+            OpportunityProgress.progress_date <= week_end
+        )
+    )
+    # 如果不是管理员，需要过滤用户可访问的商机
+    if user_role != "管理员":
+        subq = _apply_role_opportunity_filter(
+            select(Opportunity.id), user_role, user_id
+        ).subquery()
+        weekly_progress_query = weekly_progress_query.where(
+            OpportunityProgress.opportunity_id.in_(select(subq.c.id))
+        )
+    
+    weekly_progress_result = await db.execute(weekly_progress_query)
+    weekly_progress_count = weekly_progress_result.scalar() or 0
+
+    # 未推进商机数量（no_push_days > 0 且未关闭的商机）
+    no_push_opp_query = _apply_role_opportunity_filter(
+        select(func.count(Opportunity.id)).where(
+            Opportunity.no_push_days > 0,
+            (Opportunity.close_flag == 0) | (Opportunity.close_flag.is_(None))
+        ),
+        user_role,
+        user_id,
+    )
+    no_push_opp_result = await db.execute(no_push_opp_query)
+    no_push_opportunity_count = no_push_opp_result.scalar() or 0
+
     return StatsOverview(
         total_opportunities=total_opportunities,
         total_users=total_users,
@@ -154,6 +192,8 @@ async def get_stats_overview(
         bid_approaching_count=bid_approaching_count,
         competitor_detected_count=competitor_detected_count,
         pending_amount=round(pending_amount, 2),
+        weekly_progress_count=weekly_progress_count,
+        no_push_opportunity_count=no_push_opportunity_count,
     )
 
 
@@ -186,12 +226,48 @@ async def get_priority_distribution(
     return PriorityDistribution(items=items)
 
 
+# 状态映射：将数据库状态归类为4种标准状态
+STATUS_MAPPING = {
+    # 需求挖掘
+    "需求挖掘": "需求挖掘",
+    "需求确认": "需求挖掘",
+    "需求分析": "需求挖掘",
+    "方案设计": "需求挖掘",
+    "长期跟踪": "需求挖掘",
+    "需推进": "需求挖掘",
+    "暂停": "需求挖掘",
+    "签约希望低": "需求挖掘",
+    "签约失败": "需求挖掘",
+    # 解决方案
+    "解决方案": "解决方案",
+    "方案设计中": "解决方案",
+    "方案报价": "解决方案",
+    "方案确认": "解决方案",
+    # 商务谈判/招投标
+    "商务谈判/招投标": "商务谈判/招投标",
+    "商务谈判": "商务谈判/招投标",
+    "招投标": "商务谈判/招投标",
+    "招标中": "商务谈判/招投标",
+    "投标": "商务谈判/招投标",
+    "竞标": "商务谈判/招投标",
+    "谈判中": "商务谈判/招投标",
+    # 签约
+    "签约": "签约",
+    "已签约": "签约",
+    "已中标": "签约",
+    "已中标待签约": "签约",
+    "签约完成": "签约",
+    "已关闭": "签约",
+    "其他单位签约": "签约",
+}
+
+
 @router.get("/status-distribution", response_model=StatusDistribution)
 async def get_status_distribution(
     db: AsyncSession = Depends(get_db),
     current_user: dict = Depends(get_current_user),
 ):
-    """获取商机状态分布（按角色过滤）"""
+    """获取商机状态分布（按角色过滤，归类为4种标准状态）"""
     user_role = current_user.get("role")
     user_id = current_user.get("id")
 
@@ -206,13 +282,29 @@ async def get_status_distribution(
         )
     )
     base = _apply_role_opportunity_filter(base, user_role, user_id)
-    base = base.group_by(Opportunity.opportunity_status).order_by(func.count(Opportunity.id).desc())
+    base = base.group_by(Opportunity.opportunity_status)
 
     rows = await db.execute(base)
+    
+    # 将原始状态归类为4种标准状态
+    status_counts = {}
+    for row in rows.all():
+        raw_status = row[0]
+        count = row[1]
+        # 使用映射表将原始状态转换为标准状态
+        mapped_status = STATUS_MAPPING.get(raw_status, "需求挖掘")
+        status_counts[mapped_status] = status_counts.get(mapped_status, 0) + count
+    
+    # 确保4种状态都有数据（即使为0）
+    standard_statuses = ["需求挖掘", "解决方案", "商务谈判/招投标", "签约"]
     items = [
-        StatusItem(opportunity_status=row[0], count=row[1])
-        for row in rows.all()
+        StatusItem(opportunity_status=status, count=status_counts.get(status, 0))
+        for status in standard_statuses
     ]
+    
+    # 按数量降序排列
+    items.sort(key=lambda x: x.count, reverse=True)
+    
     return StatusDistribution(items=items)
 
 
@@ -411,31 +503,65 @@ async def get_branch_stats(
     db: AsyncSession = Depends(get_db),
     current_user: dict = Depends(get_current_user),
 ):
-    """获取各支局商机统计（按角色过滤）"""
+    """获取各支局商机统计（按角色过滤，包含优先级分布）"""
     user_role = current_user.get("role")
     user_id = current_user.get("id")
 
-    base = (
+    # 查询所有符合条件的商机
+    base_query = (
         select(
             Opportunity.branch_office,
-            func.count(Opportunity.id).label("opportunity_count"),
-            func.sum(Opportunity.predicted_amount).label("total_predicted_amount"),
+            Opportunity.priority_level,
+            Opportunity.predicted_amount,
         )
         .where(
             Opportunity.branch_office.isnot(None),
-            (Opportunity.close_flag == 0) | (Opportunity.close_flag.is_(None)),
         )
     )
-    base = _apply_role_opportunity_filter(base, user_role, user_id)
-    base = base.group_by(Opportunity.branch_office).order_by(func.count(Opportunity.id).desc())
+    base_query = _apply_role_opportunity_filter(base_query, user_role, user_id)
 
-    rows = await db.execute(base)
-    items = [
+    result = await db.execute(base_query)
+    rows = result.all()
+
+    # 在Python中汇总
+    branch_data = {}
+    for row in rows:
+        branch = row[0]
+        priority = row[1] or 2  # 默认为中
+        amount = row[2]
+
+        if branch not in branch_data:
+            branch_data[branch] = {
+                "branch_office": branch,
+                "opportunity_count": 0,
+                "total_predicted_amount": 0,
+                "high_count": 0,    # 高
+                "medium_count": 0,  # 中
+                "low_count": 0,     # 低
+            }
+
+        branch_data[branch]["opportunity_count"] += 1
+        branch_data[branch]["total_predicted_amount"] = float(branch_data[branch]["total_predicted_amount"] or 0) + float(amount or 0)
+
+        # 按优先级分类
+        if priority == 1:
+            branch_data[branch]["high_count"] += 1
+        elif priority == 2:
+            branch_data[branch]["medium_count"] += 1
+        else:
+            branch_data[branch]["low_count"] += 1
+
+    # 按商机数量排序
+    items = sorted(branch_data.values(), key=lambda x: x["opportunity_count"], reverse=True)
+
+    return BranchStats(items=[
         BranchStatsItem(
-            branch_office=row[0],
-            opportunity_count=row[1],
-            total_predicted_amount=row[2],
+            branch_office=item["branch_office"],
+            opportunity_count=item["opportunity_count"],
+            total_predicted_amount=item["total_predicted_amount"],
+            high_count=item["high_count"],
+            medium_count=item["medium_count"],
+            low_count=item["low_count"],
         )
-        for row in rows.all()
-    ]
-    return BranchStats(items=items)
+        for item in items
+    ])

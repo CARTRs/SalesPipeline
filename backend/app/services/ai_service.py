@@ -29,7 +29,7 @@ ANALYSIS_SYSTEM_PROMPT = """你是一位专业的商机分析顾问，分析销�
   "risk_signals": [
     {{"type": "客户犹豫|竞对压力|预算问题|需求变更|推进停滞|其他", "description": "描述", "severity": "critical|high|medium|low"}}
   ],
-  "priority_suggestion": 数字 (1=紧急 2=高 3=中 4=低),
+  "priority_suggestion": 数字 (1=高 2=中 3=低),
   "suggested_actions": ["行动1", "行动2"],
   "confidence_score": 0.0~1.0 之间的数字,
   "risk_level": "critical|high|medium|low",

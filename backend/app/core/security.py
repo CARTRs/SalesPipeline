@@ -33,6 +33,18 @@ def create_access_token(data: dict, expires_delta: Optional[timedelta] = None) -
     return jwt.encode(to_encode, settings.JWT_SECRET, algorithm=settings.JWT_ALGORITHM)
 
 
+def generate_public_token(user_key: str, user_id: int, role: str, real_name: str, days: int = 365) -> str:
+    """生成长期有效的公开 JWT token，用于免登录看板访问"""
+    to_encode = {
+        "sub": f"public_{user_key}",
+        "user_id": user_id,
+        "role": role,
+        "real_name": real_name,
+        "exp": datetime.now(timezone.utc) + timedelta(days=days),
+    }
+    return jwt.encode(to_encode, settings.JWT_SECRET, algorithm=settings.JWT_ALGORITHM)
+
+
 def decode_access_token(token: str) -> Optional[dict]:
     try:
         payload = jwt.decode(

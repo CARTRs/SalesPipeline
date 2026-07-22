@@ -14,6 +14,7 @@ from sqlalchemy import select
 
 from app.core.config import settings
 from app.models.system_config import SystemConfig
+from app.utils.desensitize import desensitize_customer_name, desensitize_opportunity_name
 
 logger = logging.getLogger(__name__)
 
@@ -496,6 +497,20 @@ def render_template(
     tpl = (templates or DEFAULT_EMAIL_TEMPLATES).get(template_key)
     if not tpl:
         raise ValueError(f"未知模板: {template_key}")
+
+    # 脱敏处理：商机名称和客户名称
+    if "opportunity_name" in kwargs:
+        kwargs["opportunity_name"] = desensitize_opportunity_name(kwargs["opportunity_name"])
+    if "customer_name" in kwargs:
+        kwargs["customer_name"] = desensitize_customer_name(kwargs["customer_name"])
+    # 周度提醒中的商机列表
+    if "opportunities" in kwargs:
+        for opp in kwargs["opportunities"]:
+            if isinstance(opp, dict):
+                if "name" in opp:
+                    opp["name"] = desensitize_opportunity_name(opp["name"])
+                if "customer" in opp:
+                    opp["customer"] = desensitize_customer_name(opp["customer"])
 
     subject = Template(tpl["subject"]).render(**kwargs)
     body = Template(tpl["body_html"]).render(**kwargs)

@@ -250,7 +250,10 @@ async def import_excel(file_path: str, db: AsyncSession) -> dict:
             # 自动计算 no_push_days
             if valid_fields.get("no_push_days") is None or valid_fields.get("no_push_days") == 0:
                 if valid_fields.get("last_push_date"):
-                    valid_fields["no_push_days"] = (date.today() - valid_fields["last_push_date"]).days
+                    last_push = valid_fields["last_push_date"]
+                    if isinstance(last_push, datetime):
+                        last_push = last_push.date()
+                    valid_fields["no_push_days"] = max((date.today() - last_push).days, 0)
                 else:
                     valid_fields["no_push_days"] = 0
 

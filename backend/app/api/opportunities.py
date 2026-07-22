@@ -3,7 +3,7 @@ import tempfile
 from datetime import date
 from typing import Optional
 
-from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query, UploadFile, File, status
+from fastapi import APIRouter, BackgroundTasks, Body, Depends, HTTPException, Query, UploadFile, File, status
 from fastapi.responses import FileResponse
 from sqlalchemy import select, func, or_
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -453,3 +453,55 @@ async def delete_opportunity(
         raise HTTPException(status_code=404, detail="商机不存在")
     await db.delete(opp)
     await db.flush()
+
+
+@router.post("/batch-bind", status_code=status.HTTP_200_OK)
+async def batch_bind_opportunities(
+    opportunity_ids: list[int] = Body(...),
+    role: str = Query(...),
+    user_id: int = Query(...),
+    db: AsyncSession = Depends(get_db),
+    current_user: dict = Depends(get_current_user),
+):
+    """批量绑定商机到指定角色用户"""
+    if role not in ("division_member_id", "account_manager_id", "branch_director_id"):
+        raise HTTPException(status_code=400, detail="角色字段无效")
+    if not opportunity_ids:
+        raise HTTPException(status_code=400, detail="请选择商机")
+
+    # 验证用户存在
+    user_result = await db.execute(select(User).where(User.id == user_id))
+    user = user_result.scalar_one_or_none()
+    if not user:
+        raise HTTPException(status_code=404, detail="用户不存在")
+
+    result = await db.execute(
+        select(Opportunity).where(Opportunity.id.in_(opportunity_ids))
+    )
+    opportunities = result.scalars().all()
+    for opp in opportunities:
+        setattr(opp, role, user_id)
+    await db.flush()
+
+    return {"message": f"已将 {len(opportunities)} 条商机绑定给 {user.real_name}"}
+
+
+@router.post("/batch-delete", status_code=status.HTTP_200_OK)
+async def batch_delete_opportunities(
+    opportunity_ids: list[int] = Body(...),
+    db: AsyncSession = Depends(get_db),
+    current_user: dict = Depends(get_current_user),
+):
+    """批量删除商机"""
+    if not opportunity_ids:
+        raise HTTPException(status_code=400, detail="请选择商机")
+
+    result = await db.execute(
+        select(Opportunity).where(Opportunity.id.in_(opportunity_ids))
+    )
+    opportunities = result.scalars().all()
+    for opp in opportunities:
+        await db.delete(opp)
+    await db.flush()
+
+    return {"message": f"已删除 {len(opportunities)} 条商机"}

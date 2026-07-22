@@ -233,8 +233,7 @@ body {
 /* Status tags */
 .tag-priority-1 { background-color: var(--ds-danger-bg); color: #BF2600; }
 .tag-priority-2 { background-color: var(--ds-info-bg); color: #0065FF; }
-.tag-priority-3 { background-color: var(--ds-warning-bg); color: #7F5F00; }
-.tag-priority-4 { background-color: #EAE6FF; color: #403294; }
+.tag-priority-3 { background-color: var(--ds-success-bg); color: #006644; }
 
 .tag-status-normal { background-color: var(--ds-success-bg); color: #006644; }
 .tag-status-warning { background-color: var(--ds-warning-bg); color: #7F5F00; }

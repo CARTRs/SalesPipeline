@@ -1,85 +1,94 @@
 <template>
   <el-container class="main-layout">
-    <!-- Jira 风格深色侧边栏 -->
-    <el-aside :width="sidebarWidth" class="sidebar">
-      <div class="sidebar-header">
-        <div class="logo-icon">S</div>
-        <span class="logo-text" v-show="!collapsed">商机跟踪</span>
-      </div>
-      <el-menu
-        :default-active="activeMenu"
-        :collapse="collapsed"
-        background-color="#0747A6"
-        text-color="#FFFFFF"
-        active-text-color="#FFFFFF"
-        :unique-opened="true"
-        router
-      >
-        <el-menu-item index="/opportunities">
-          <el-icon><List /></el-icon>
-          <template #title>商机列表</template>
-        </el-menu-item>
-        <el-menu-item index="/opportunities/create">
-          <el-icon><Plus /></el-icon>
-          <template #title>新建商机</template>
-        </el-menu-item>
-        <el-menu-item index="/dashboard">
-          <el-icon><DataAnalysis /></el-icon>
-          <template #title>数据看板</template>
-        </el-menu-item>
-        <el-menu-item index="/settings">
-          <el-icon><Setting /></el-icon>
-          <template #title>系统设置</template>
-        </el-menu-item>
-        <el-menu-item index="/logs">
-          <el-icon><Document /></el-icon>
-          <template #title>操作日志</template>
-        </el-menu-item>
-      </el-menu>
-      <div class="sidebar-footer" :class="{ collapsed }" @click="collapsed = !collapsed">
-        <!-- 展开/收起图标（阿里风格内联SVG） -->
-        <svg class="collapse-icon" viewBox="0 0 16 16" fill="none" xmlns="http://www.w3.org/2000/svg">
-          <path v-if="!collapsed" d="M10 3L5 8L10 13" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
-          <path v-else d="M6 3L11 8L6 13" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
-        </svg>
-        <span class="collapse-text" v-show="!collapsed">收起侧栏</span>
-      </div>
-    </el-aside>
-
-    <!-- 主内容区 -->
-    <el-container class="main-container">
-      <!-- 顶栏 -->
-      <header class="top-bar">
-        <div class="top-bar-left">
-          <el-breadcrumb separator="/">
-            <el-breadcrumb-item :to="{ path: '/' }">首页</el-breadcrumb-item>
-            <el-breadcrumb-item v-if="pageTitle">{{ pageTitle }}</el-breadcrumb-item>
-          </el-breadcrumb>
-        </div>
-        <div class="top-bar-right">
-          <el-dropdown @command="handleCommand">
-            <span class="user-info">
-              <el-avatar :size="28" style="background-color: #0052CC; vertical-align: middle;">
-                {{ userName?.charAt(0) || 'U' }}
-              </el-avatar>
-              <span class="user-name">{{ userName || '用户' }}</span>
-              <el-icon><ArrowDown /></el-icon>
-            </span>
-            <template #dropdown>
-              <el-dropdown-menu>
-                <el-dropdown-item command="profile">个人设置</el-dropdown-item>
-                <el-dropdown-item divided command="logout">退出登录</el-dropdown-item>
-              </el-dropdown-menu>
-            </template>
-          </el-dropdown>
-        </div>
-      </header>
-
-      <!-- 页面内容 -->
-      <main class="page-content">
+    <!-- 全屏模式：直接渲染内容 -->
+    <template v-if="isFullscreen">
+      <main class="page-content-fullscreen">
         <router-view />
       </main>
-    </el-container>
+    </template>
+
+    <!-- 正常模式：显示侧边栏和顶栏 -->
+    <template v-else>
+      <!-- Jira 风格深色侧边栏 -->
+      <el-aside :width="sidebarWidth" class="sidebar">
+        <div class="sidebar-header">
+          <div class="logo-icon">S</div>
+          <span class="logo-text" v-show="!collapsed">商机跟踪</span>
+        </div>
+        <el-menu
+          :default-active="activeMenu"
+          :collapse="collapsed"
+          background-color="#0747A6"
+          text-color="#FFFFFF"
+          active-text-color="#FFFFFF"
+          :unique-opened="true"
+          router
+        >
+          <el-menu-item index="/opportunities">
+            <el-icon><List /></el-icon>
+            <template #title>商机列表</template>
+          </el-menu-item>
+          <el-menu-item index="/opportunities/create">
+            <el-icon><Plus /></el-icon>
+            <template #title>新建商机</template>
+          </el-menu-item>
+          <el-menu-item index="/dashboard" @click.prevent="openDashboardInNewTab">
+            <el-icon><DataAnalysis /></el-icon>
+            <template #title>数据看板</template>
+          </el-menu-item>
+          <el-menu-item index="/settings">
+            <el-icon><Setting /></el-icon>
+            <template #title>系统设置</template>
+          </el-menu-item>
+          <el-menu-item index="/logs">
+            <el-icon><Document /></el-icon>
+            <template #title>操作日志</template>
+          </el-menu-item>
+        </el-menu>
+        <div class="sidebar-footer" :class="{ collapsed }" @click="collapsed = !collapsed">
+          <svg class="collapse-icon" viewBox="0 0 16 16" fill="none" xmlns="http://www.w3.org/2000/svg">
+            <path v-if="!collapsed" d="M10 3L5 8L10 13" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
+            <path v-else d="M6 3L11 8L6 13" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
+          </svg>
+          <span class="collapse-text" v-show="!collapsed">收起侧栏</span>
+        </div>
+      </el-aside>
+
+      <!-- 主内容区 -->
+      <el-container class="main-container">
+        <!-- 顶栏 -->
+        <header class="top-bar">
+          <div class="top-bar-left">
+            <el-breadcrumb separator="/">
+              <el-breadcrumb-item :to="{ path: '/' }">首页</el-breadcrumb-item>
+              <el-breadcrumb-item v-if="pageTitle">{{ pageTitle }}</el-breadcrumb-item>
+            </el-breadcrumb>
+          </div>
+          <div class="top-bar-right">
+            <el-dropdown @command="handleCommand">
+              <span class="user-info">
+                <el-avatar :size="28" style="background-color: #0052CC; vertical-align: middle;">
+                  {{ userName?.charAt(0) || 'U' }}
+                </el-avatar>
+                <span class="user-name">{{ userName || '用户' }}</span>
+                <el-icon><ArrowDown /></el-icon>
+              </span>
+              <template #dropdown>
+                <el-dropdown-menu>
+                  <el-dropdown-item command="profile">个人设置</el-dropdown-item>
+                  <el-dropdown-item divided command="logout">退出登录</el-dropdown-item>
+                </el-dropdown-menu>
+              </template>
+            </el-dropdown>
+          </div>
+        </header>
+
+        <!-- 页面内容 -->
+        <main class="page-content">
+          <router-view />
+        </main>
+      </el-container>
+    </template>
   </el-container>
 </template>
 
@@ -92,6 +101,7 @@ const route = useRoute()
 const router = useRouter()
 const collapsed = ref(false)
 const sidebarWidth = computed(() => (collapsed.value ? '64px' : '240px'))
+const isFullscreen = computed(() => !!route.meta?.fullscreen)
 
 const pageTitle = computed(() => {
   const map = {
@@ -114,6 +124,10 @@ function handleCommand(command) {
     localStorage.removeItem('real_name')
     router.push('/login')
   }
+}
+
+function openDashboardInNewTab() {
+  window.open('/dashboard', '_blank')
 }
 </script>
 
@@ -218,5 +232,12 @@ function handleCommand(command) {
   padding: 24px;
   overflow-y: auto;
   background-color: var(--ds-background-default);
+}
+.page-content-fullscreen {
+  flex: 1;
+  padding: 24px;
+  overflow-y: auto;
+  background-color: var(--ds-background-default);
+  width: 100%;
 }
 </style>

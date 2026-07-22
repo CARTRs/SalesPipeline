@@ -3,6 +3,7 @@ from typing import Optional
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy import select, func
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.exc import IntegrityError
 
 from app.core.database import get_db
 from app.core.security import get_password_hash, get_current_user
@@ -21,7 +22,7 @@ async def _require_admin(current_user: dict):
 @router.get("", response_model=UserListResponse)
 async def list_users(
     page: int = Query(1, ge=1),
-    page_size: int = Query(20, ge=1, le=100),
+    page_size: int = Query(20, ge=1, le=200),
     role: Optional[str] = None,
     department: Optional[str] = None,
     db: AsyncSession = Depends(get_db),
@@ -149,5 +150,10 @@ async def delete_user(
     if user.id == current_user.get("id"):
         raise HTTPException(status_code=400, detail="不能删除自己")
 
-    await db.delete(user)
-    await db.flush()
+    try:
+        await db.delete(user)
+        await db.flush()
+    except IntegrityError as e:
+        await db.rollback()
+        detail = "该用户存在关联的进度记录或邮件日志，无法删除。请先解除该用户的关联数据后再试。"
+        raise HTTPException(status_code=409, detail=detail)

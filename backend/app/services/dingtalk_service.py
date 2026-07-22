@@ -17,6 +17,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import settings
 from app.models.system_config import SystemConfig
+from app.utils.desensitize import desensitize_customer_name, desensitize_opportunity_name
 
 logger = logging.getLogger(__name__)
 
@@ -108,6 +109,8 @@ def build_progress_update_msg(
     at_mobiles: list[str] = None,
 ) -> tuple[str, str]:
     """构建进度更新通知消息，返回 (title, markdown_content)"""
+    opportunity_name = desensitize_opportunity_name(opportunity_name)
+    customer_name = desensitize_customer_name(customer_name)
     title = f"📝 进度更新 — {opportunity_name}"
     content = (
         f"### 📝 进度更新通知\n"
@@ -134,6 +137,8 @@ def build_ai_alert_msg(
     at_mobiles: list[str] = None,
 ) -> tuple[str, str]:
     """构建AI风险预警消息"""
+    opportunity_name = desensitize_opportunity_name(opportunity_name)
+    customer_name = desensitize_customer_name(customer_name)
     level_emoji = {"critical": "🔴", "high": "🟠", "medium": "🟡", "low": "🟢"}
     emoji = level_emoji.get(risk_level, "⚠️")
 
@@ -175,6 +180,8 @@ def build_priority_change_msg(
     at_mobiles: list[str] = None,
 ) -> tuple[str, str]:
     """构建优先级变更通知消息"""
+    opportunity_name = desensitize_opportunity_name(opportunity_name)
+    customer_name = desensitize_customer_name(customer_name)
     title = f"🔔 优先级变更 — {opportunity_name}"
     content = (
         f"### 🔔 优先级变更通知\n"
@@ -198,6 +205,8 @@ def build_bid_approach_msg(
     at_mobiles: list[str] = None,
 ) -> tuple[str, str]:
     """构建招标临近提醒消息"""
+    opportunity_name = desensitize_opportunity_name(opportunity_name)
+    customer_name = desensitize_customer_name(customer_name)
     title = f"⏰ 招标临近 — {opportunity_name}"
     content = (
         f"### ⏰ 招标临近提醒\n"
@@ -221,6 +230,8 @@ def build_no_push_warn_msg(
     at_mobiles: list[str] = None,
 ) -> tuple[str, str]:
     """构建超期未推进预警消息"""
+    opportunity_name = desensitize_opportunity_name(opportunity_name)
+    customer_name = desensitize_customer_name(customer_name)
     title = f"⚠️ 超期未推进 — {opportunity_name}"
     content = (
         f"### ⚠️ 未推进超期预警\n"
@@ -246,8 +257,10 @@ def build_weekly_remind_msg(
     content = f"### 📋 本周待更新商机提醒\n**{director_name}**，以下是本周待更新进度的商机：\n\n"
 
     for opp in opportunities:
+        opp_name = desensitize_opportunity_name(opp['name'])
+        opp_customer = desensitize_customer_name(opp['customer'])
         content += (
-            f"- **{opp['name']}**（{opp['customer']}）"
+            f"- **{opp_name}**（{opp_customer}）"
             f" — 未推进 **{opp['no_push_days']}** 天\n"
         )
 
@@ -498,7 +511,7 @@ async def notify_priority_change(
     db_session=None,
 ):
     """优先级变更通知：@客户经理+责任支局长"""
-    _PRIORITY_NAMES = {1: "紧急", 2: "高", 3: "中", 4: "低"}
+    _PRIORITY_NAMES = {1: "高", 2: "中", 3: "低"}
     try:
         async with (db_session or _get_session()) as db:
             from app.models.opportunity import Opportunity

@@ -121,7 +121,7 @@ class OpportunityResponse(BaseModel):
     remarks: Optional[str] = None
     estimated_sign_date: Optional[date] = None
     is_list_customer: Optional[bool] = False
-    priority_level: Optional[int] = 3
+    priority_level: Optional[int] = 2
     ai_risk_level: Optional[str] = None
     ai_analysis_summary: Optional[str] = None
     last_ai_analysis_at: Optional[datetime] = None
@@ -140,3 +140,38 @@ class OpportunityListResponse(BaseModel):
     page: int
     page_size: int
     items: list[OpportunityResponse]
+
+
+class ProgressBrief(BaseModel):
+    """进度记录简要信息"""
+    id: int
+    updater_role: str
+    progress_content: str
+    progress_date: Optional[date] = None
+    created_at: Optional[datetime] = None
+    updater_name: Optional[str] = None
+
+    model_config = {"from_attributes": True}
+
+
+class AiAnalysisBrief(BaseModel):
+    """AI分析结果简要信息"""
+    id: int
+    analysis_type: str
+    risk_signals: Optional[list] = None
+    priority_suggestion: Optional[int] = None
+    suggested_actions: Optional[list] = None
+    confidence_score: Optional[float] = None
+    role_conflicts: Optional[list] = None
+    timeline_analysis: Optional[str] = None
+    created_at: Optional[datetime] = None
+
+    model_config = {"from_attributes": True}
+
+
+class OpportunityDetailResponse(OpportunityResponse):
+    """商机完整详情（包含进度记录和AI分析历史）"""
+    progress_records: list[ProgressBrief] = []
+    ai_analysis_history: list[AiAnalysisBrief] = []
+    total_progress_count: int = 0
+    total_analysis_count: int = 0

@@ -4,7 +4,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from app.core.config import settings
-from app.api import auth, users, opportunities, progress, email_logs, operation_logs, priority_engine, ai, ai_analysis, dashboard, scheduler, configs, mcp
+from app.api import auth, users, opportunities, progress, email_logs, operation_logs, priority_engine, ai, ai_analysis, dashboard, scheduler, configs, mcp, public
 from app.services.scheduler_service import scheduler_service
 
 
@@ -45,6 +45,7 @@ app.include_router(dashboard.router)
 app.include_router(scheduler.router)
 app.include_router(configs.router)
 app.include_router(mcp.router)
+app.include_router(public.router)
 
 
 @app.get("/api/health")

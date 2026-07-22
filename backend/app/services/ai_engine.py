@@ -25,14 +25,19 @@ logger = logging.getLogger(__name__)
 SYSTEM_PROMPT = """你是一位专业的商机（机会）分析顾问，精通政府和企业采购项目风险评估。
 请根据用户提供的商机进度文本，分析并返回 JSON 格式的结果。不要包含 markdown 标记以外的额外说明。
 
+重要：进度记录包含多个角色（客户经理、项目经理、责任支局长）的信息，请特别注意：
+1. 不同角色可能对同一事件有不同看法或掌握不同信息
+2. 信息不一致本身是一种风险信号，需要识别并报告
+3. 按时间线分析信息变化趋势，判断事态发展走向
+
 返回格式：
 {
   "risk_signals": [
-    {"type": "进度延迟|预算变动|需求变更|竞争对手|政策风险|组织调整|质量风险|验收风险", "description": "具体风险描述", "severity": "critical|high|medium|low"}
+    {"type": "进度延迟|预算变动|需求变更|竞争对手|政策风险|组织调整|质量风险|验收风险|信息不一致|信息冲突", "description": "具体风险描述", "severity": "critical|high|medium|low", "involved_roles": ["涉及的角色列表，如客户经理、项目经理"]}
   ],
-  "priority_suggestion": 1-4（1紧急 2高 3中 4低）,
+  "priority_suggestion": 1-3（1高 2中 3低）,
   "priority_reason": "优先级判断的理由",
-  "suggested_status": "根据进度文本推断的商机状态，可选值：需求确认|方案设计|招标中|投标|商务谈判|已签约|签约失败|需推进|长期跟踪|其他单位签约|签约希望低，根据实际情况选择最匹配的",
+  "suggested_status": "根据进度文本推断的商机状态，可选值：需求挖掘|解决方案|商务谈判/招投标|签约，根据实际情况选择最匹配的",
   "suggested_actions": ["行动1", "行动2", ...],
   "competitor_detected": true/false,
   "competitor_details": "如检测到竞争对手，描述竞对信息",
@@ -40,7 +45,11 @@ SYSTEM_PROMPT = """你是一位专业的商机（机会）分析顾问，精通�
   "bid_detected": true/false,  是否涉及招标/投标/竞标,
   "confidence_score": 0.0-1.0,
   "summary": "分析摘要（50字以内）",
-  "risk_level": "critical|high|medium|low"
+  "risk_level": "critical|high|medium|low",
+  "role_conflicts": [
+    {"roles": ["客户经理", "项目经理"], "topic": "冲突主题", "description": "具体冲突描述", "severity": "high|medium|low"}
+  ],
+  "timeline_analysis": "按时间线分析信息变化趋势，判断事态发展走向（100字以内）"
 }"""
 
 
@@ -203,6 +212,8 @@ async def analyze_progress_text(
             if parsed.get("confidence_score") is not None
             else None
         ),
+        role_conflicts=parsed.get("role_conflicts", []),
+        timeline_analysis=parsed.get("timeline_analysis", ""),
     )
     db.add(analysis)
     await db.flush()
@@ -240,6 +251,8 @@ async def analyze_progress_text(
         "confidence_score": parsed.get("confidence_score"),
         "competitor_detected": parsed.get("competitor_detected", False),
         "bid_date_approaching": parsed.get("bid_date_approaching", False),
+        "role_conflicts": parsed.get("role_conflicts", []),
+        "timeline_analysis": parsed.get("timeline_analysis", ""),
         "created_at": analysis.created_at,
     }
 
@@ -309,6 +322,8 @@ async def analyze_opportunity_full(
             if parsed.get("confidence_score") is not None
             else None
         ),
+        role_conflicts=parsed.get("role_conflicts", []),
+        timeline_analysis=parsed.get("timeline_analysis", ""),
     )
     db.add(analysis)
     await db.flush()
@@ -345,6 +360,8 @@ async def analyze_opportunity_full(
         "confidence_score": parsed.get("confidence_score"),
         "competitor_detected": parsed.get("competitor_detected", False),
         "bid_date_approaching": parsed.get("bid_date_approaching", False),
+        "role_conflicts": parsed.get("role_conflicts", []),
+        "timeline_analysis": parsed.get("timeline_analysis", ""),
         "created_at": analysis.created_at,
     }
 

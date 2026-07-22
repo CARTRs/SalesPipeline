@@ -1,14 +1,17 @@
 """
 AI 引擎 — API 路由：商机分析、文本分析、分析历史
 """
+import json
 import logging
+import uuid
 from typing import Optional
 
-from fastapi import APIRouter, Depends, HTTPException, Query, status
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query, status
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.database import get_db
+from app.core.config import settings
 from app.models.opportunity import Opportunity
 from app.schemas.ai import (
     AiAnalysisHistoryResponse,
@@ -26,6 +29,63 @@ from app.services.ai_engine import (
 logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api/ai", tags=["AI 引擎"])
+
+
+# ---------------------------------------------------------------------------
+# 批量分析任务状态追踪 — 使用 Redis 跨 worker 共享
+# ---------------------------------------------------------------------------
+def _get_redis():
+    """获取 Redis 连接（同步，用于简单 KV 操作）。"""
+    import redis
+    return redis.Redis.from_url(settings.REDIS_URL, decode_responses=True)
+
+
+def _set_task(task_id: str, data: dict):
+    r = _get_redis()
+    r.set(f"ai_task:{task_id}", json.dumps(data, ensure_ascii=False), ex=3600)
+
+
+def _get_task(task_id: str) -> dict | None:
+    r = _get_redis()
+    raw = r.get(f"ai_task:{task_id}")
+    return json.loads(raw) if raw else None
+
+
+async def _run_analyze_all_background(task_id: str, opportunity_ids: list[int]):
+    """后台执行全量 AI 分析，逐个分析并更新进度。"""
+    from app.core.database import async_session
+
+    results = []
+    errors = []
+    async with async_session() as db:
+        for idx, opp_id in enumerate(opportunity_ids):
+            try:
+                r = await analyze_opportunity_full(opp_id, db)
+                results.append({"opportunity_id": opp_id, "success": True, "data": r})
+            except Exception as e:
+                logger.exception("AI 全量分析商机 %s 失败", opp_id)
+                errors.append({"opportunity_id": opp_id, "error": str(e)})
+
+            # 更新 Redis 进度
+            _set_task(task_id, {
+                "status": "running",
+                "total": len(opportunity_ids),
+                "analyzed": len(results),
+                "failed": len(errors),
+                "current_index": idx + 1,
+            })
+
+        await db.commit()
+
+    _set_task(task_id, {
+        "status": "completed",
+        "total": len(opportunity_ids),
+        "analyzed": len(results),
+        "failed": len(errors),
+        "current_index": len(opportunity_ids),
+        "results": results,
+        "errors": errors,
+    })
 
 
 @router.post("/analyze", response_model=dict)
@@ -95,8 +155,11 @@ async def analyze_batch(
 
 
 @router.post("/analyze-all", response_model=dict)
-async def analyze_all(db: AsyncSession = Depends(get_db)):
-    """对所有活跃商机执行 AI 全量分析。"""
+async def analyze_all(
+    background_tasks: BackgroundTasks,
+    db: AsyncSession = Depends(get_db),
+):
+    """对所有活跃商机启动后台 AI 全量分析（立即返回 task_id，前端轮询进度）。"""
     result = await db.execute(
         select(Opportunity.id).where(
             (Opportunity.close_flag == 0) | (Opportunity.close_flag.is_(None))
@@ -105,25 +168,45 @@ async def analyze_all(db: AsyncSession = Depends(get_db)):
     all_ids = [row[0] for row in result.all()]
 
     if not all_ids:
-        return {"success": True, "total": 0, "analyzed": 0, "failed": 0, "results": [], "errors": []}
+        return {"success": True, "total": 0, "analyzed": 0, "failed": 0, "results": [], "errors": [], "task_id": None}
 
-    results = []
-    errors = []
-    for opp_id in all_ids:
-        try:
-            r = await analyze_opportunity_full(opp_id, db)
-            results.append({"opportunity_id": opp_id, "success": True, "data": r})
-        except Exception as e:
-            logger.exception("AI 全量分析商机 %s 失败", opp_id)
-            errors.append({"opportunity_id": opp_id, "error": str(e)})
+    task_id = str(uuid.uuid4())[:8]
+    _set_task(task_id, {
+        "status": "running",
+        "total": len(all_ids),
+        "analyzed": 0,
+        "failed": 0,
+        "current_index": 0,
+        "results": [],
+        "errors": [],
+    })
+
+    background_tasks.add_task(_run_analyze_all_background, task_id, all_ids)
 
     return {
-        "success": len(errors) == 0,
+        "success": True,
+        "task_id": task_id,
         "total": len(all_ids),
-        "analyzed": len(results),
-        "failed": len(errors),
-        "results": results,
-        "errors": errors,
+        "message": f"已启动后台分析，共 {len(all_ids)} 条商机",
+    }
+
+
+@router.get("/analyze-all/{task_id}", response_model=dict)
+async def get_analyze_all_status(task_id: str):
+    """查询后台批量分析任务的进度（通过 Redis 跨 worker 共享状态）。"""
+    task = _get_task(task_id)
+    if not task:
+        raise HTTPException(status_code=404, detail="任务不存在或已过期")
+    return {
+        "task_id": task_id,
+        "status": task["status"],
+        "total": task["total"],
+        "analyzed": task["analyzed"],
+        "failed": task["failed"],
+        "current_index": task["current_index"],
+        "is_completed": task["status"] == "completed",
+        "results": task.get("results", []) if task["status"] == "completed" else [],
+        "errors": task.get("errors", []) if task["status"] == "completed" else [],
     }
 
 

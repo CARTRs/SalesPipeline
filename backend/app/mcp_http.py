@@ -117,6 +117,15 @@ TOOLS = [
             "required": ["token", "title", "content"]
         }
     },
+    {
+        "name": "sjxt_open_dashboard",
+        "description": "打开商机跟踪系统数据看板页面",
+        "inputSchema": {
+            "type": "object",
+            "properties": {},
+            "required": []
+        }
+    },
 ]
 
 
@@ -215,6 +224,19 @@ async def execute_tool(tool_name: str, arguments: dict) -> dict:
         elif tool_name == "sjxt_send_dingtalk":
             token = arguments.pop("token", None)
             result = await call_backend_api("POST", "/mcp/dingtalk/send", token=token, data=arguments)
+
+        elif tool_name == "sjxt_open_dashboard":
+            result = {
+                "admin": {
+                    "title": "余杭分公司产数大单商机看板",
+                    "url": "http://124.220.19.159:3000/public-dashboard/admin"
+                },
+                "zw": {
+                    "title": "余杭政务支局-产数大单商机看板",
+                    "url": "http://124.220.19.159:3000/public-dashboard/zw"
+                },
+                "message": "以上地址可直接在浏览器中打开，无需登录"
+            }
 
         else:
             result = {"error": f"Unknown tool: {tool_name}"}

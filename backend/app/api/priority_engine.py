@@ -55,7 +55,6 @@ async def evaluate_single(
             current_priority=result["current_priority"],
             suggested_priority=result["suggested_priority"],
             priority_changed=result["priority_changed"],
-            priority_score=result["priority_score"],
             score_breakdown=result["score_breakdown"],
             reason=result["reason"],
             evaluated_at=result["evaluated_at"],

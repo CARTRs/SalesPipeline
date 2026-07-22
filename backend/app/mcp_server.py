@@ -118,6 +118,15 @@ async def list_tools() -> list[Tool]:
                 "required": ["token", "title", "content"]
             }
         ),
+        Tool(
+            name="sjxt_open_dashboard",
+            description="打开商机跟踪系统数据看板页面",
+            inputSchema={
+                "type": "object",
+                "properties": {},
+                "required": []
+            }
+        ),
     ]
 
 
@@ -200,6 +209,13 @@ async def call_tool(name: str, arguments: dict) -> list[TextContent]:
         elif name == "sjxt_send_dingtalk":
             token = arguments.pop("token")
             result = await _call_api("POST", "/mcp/dingtalk/send", token=token, data=arguments)
+            return [TextContent(type="text", text=json.dumps(result, ensure_ascii=False, indent=2))]
+
+        elif name == "sjxt_open_dashboard":
+            result = {
+                "url": "http://124.220.19.159:3000/dashboard",
+                "message": "商机跟踪系统数据看板"
+            }
             return [TextContent(type="text", text=json.dumps(result, ensure_ascii=False, indent=2))]
 
         else:

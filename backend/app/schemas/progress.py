@@ -17,6 +17,7 @@ class ProgressResponse(BaseModel):
     opportunity_id: int
     updater_id: int
     updater_role: str
+    updater_name: Optional[str] = None
     progress_content: str
     progress_date: date
     week_number: Optional[int] = None

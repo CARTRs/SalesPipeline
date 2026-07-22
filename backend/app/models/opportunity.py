@@ -41,7 +41,7 @@ class Opportunity(Base):
     is_list_customer = Column(Boolean, default=False, comment="是否清单级客户")
 
     # System extended fields
-    priority_level = Column(Integer, default=3, comment="优先级：1紧急 2高 3中 4低")
+    priority_level = Column(Integer, default=2, comment="优先级：1高 2中 3低")
     ai_risk_level = Column(String(20), comment="AI风险等级：critical/high/medium/low")
     ai_analysis_summary = Column(Text, comment="AI分析摘要")
     last_ai_analysis_at = Column(DateTime, comment="上次AI分析时间")

@@ -18,6 +18,8 @@ class AiAnalysisResult(Base):
     suggested_actions = Column(JSONB, comment="建议行动列表")
     full_response = Column(Text, comment="AI完整返回原文")
     confidence_score = Column(Numeric(3, 2), comment="置信度 0~1")
+    role_conflicts = Column(JSONB, comment="角色信息冲突列表")
+    timeline_analysis = Column(Text, comment="时间线分析")
     created_at = Column(DateTime, server_default=func.now(), comment="分析时间")
 
     # relationships

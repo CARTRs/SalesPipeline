@@ -17,4 +17,8 @@ export const opportunityApi = {
   create: (data) => http.post('/opportunities', data),
   update: (id, data) => http.put(`/opportunities/${id}`, data),
   delete: (id) => http.delete(`/opportunities/${id}`),
+  batchBind: (opportunityIds, role, userId) =>
+    http.post('/opportunities/batch-bind', opportunityIds, { params: { role, user_id: userId } }),
+  batchDelete: (opportunityIds) =>
+    http.post('/opportunities/batch-delete', opportunityIds),
 }

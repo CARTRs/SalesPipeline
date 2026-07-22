@@ -16,7 +16,7 @@ from app.core.security import verify_password, create_access_token
 from app.models.opportunity import Opportunity
 from app.models.opportunity_progress import OpportunityProgress
 from app.models.user import User
-from app.schemas.opportunity import OpportunityResponse, OpportunityListResponse
+from app.schemas.opportunity import OpportunityResponse, OpportunityListResponse, OpportunityDetailResponse, ProgressBrief, AiAnalysisBrief
 from app.schemas.progress import ProgressCreate, ProgressResponse
 from app.api.progress import _build_weekly_progress, _auto_analyze, _notify_progress_update
 
@@ -213,6 +213,97 @@ async def agent_get_opportunity(
     if not opp:
         raise HTTPException(status_code=404, detail="商机不存在或无权访问")
     return OpportunityResponse.model_validate(opp)
+
+
+@router.get("/opportunities/{opportunity_id}/detail", response_model=OpportunityDetailResponse)
+async def agent_get_opportunity_detail(
+    opportunity_id: int,
+    current_user: dict = Depends(get_agent_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """获取商机完整详情（包含进度记录和AI分析历史）"""
+    query = (
+        select(Opportunity)
+        .options(
+            selectinload(Opportunity.division_member),
+            selectinload(Opportunity.account_manager),
+            selectinload(Opportunity.branch_director),
+        )
+        .where(Opportunity.id == opportunity_id)
+    )
+
+    user_role = current_user["role"]
+    user_id = current_user["id"]
+    if user_role == "项目经理":
+        query = query.where(Opportunity.division_member_id == user_id)
+    elif user_role == "客户经理":
+        query = query.where(Opportunity.account_manager_id == user_id)
+    elif user_role == "责任支局长":
+        query = query.where(Opportunity.branch_director_id == user_id)
+
+    result = await db.execute(query)
+    opp = result.scalar_one_or_none()
+    if not opp:
+        raise HTTPException(status_code=404, detail="商机不存在或无权访问")
+
+    # 获取进度记录
+    from app.models.ai_analysis_result import AiAnalysisResult
+    progress_result = await db.execute(
+        select(OpportunityProgress)
+        .where(OpportunityProgress.opportunity_id == opportunity_id)
+        .order_by(OpportunityProgress.created_at.desc())
+        .limit(50)
+    )
+    progress_records = progress_result.scalars().all()
+
+    # 获取AI分析历史
+    analysis_result = await db.execute(
+        select(AiAnalysisResult)
+        .where(AiAnalysisResult.opportunity_id == opportunity_id)
+        .order_by(AiAnalysisResult.created_at.desc())
+        .limit(20)
+    )
+    analysis_records = analysis_result.scalars().all()
+
+    # 构建进度记录列表
+    progress_list = []
+    for p in progress_records:
+        updater_name = ""
+        if hasattr(p, 'updater') and p.updater:
+            updater_name = p.updater.real_name
+        progress_list.append(ProgressBrief(
+            id=p.id,
+            updater_role=p.updater_role,
+            progress_content=p.progress_content,
+            progress_date=p.progress_date,
+            created_at=p.created_at,
+            updater_name=updater_name,
+        ))
+
+    # 构建AI分析历史列表
+    analysis_list = []
+    for a in analysis_records:
+        analysis_list.append(AiAnalysisBrief(
+            id=a.id,
+            analysis_type=a.analysis_type,
+            risk_signals=a.risk_signals,
+            priority_suggestion=a.priority_suggestion,
+            suggested_actions=a.suggested_actions,
+            confidence_score=float(a.confidence_score) if a.confidence_score else None,
+            role_conflicts=a.role_conflicts,
+            timeline_analysis=a.timeline_analysis,
+            created_at=a.created_at,
+        ))
+
+    # 构建响应
+    opp_data = OpportunityResponse.model_validate(opp)
+    return OpportunityDetailResponse(
+        **opp_data.model_dump(),
+        progress_records=progress_list,
+        ai_analysis_history=analysis_list,
+        total_progress_count=len(progress_records),
+        total_analysis_count=len(analysis_records),
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -457,8 +548,12 @@ async def agent_create_progress(
         _notify_progress_update, opportunity_id, user_id, data.progress_content
     )
 
+    # 构建响应，添加updater_name
+    progress_data = ProgressResponse.model_validate(prog)
+    progress_data.updater_name = current_user.get("real_name") or current_user.get("username")
+
     return AgentProgressWithAIResponse(
-        progress=ProgressResponse.model_validate(prog),
+        progress=progress_data,
         ai_analysis=ai_result,
         ai_analysis_error=ai_error,
     )
@@ -502,9 +597,16 @@ async def agent_list_progress(
     result = await db.execute(progress_query)
     items = result.scalars().all()
 
+    # 构建响应列表，手动添加updater_name
+    progress_list = []
+    for p in items:
+        progress_data = ProgressResponse.model_validate(p)
+        progress_data.updater_name = p.updater.real_name if p.updater else None
+        progress_list.append(progress_data)
+
     return {
         "total": total,
-        "items": [ProgressResponse.model_validate(p) for p in items],
+        "items": progress_list,
     }
 
 
@@ -560,3 +662,194 @@ async def agent_send_dingtalk(
         raise HTTPException(status_code=502, detail="钉钉消息发送失败，请检查 Webhook 配置")
 
     return {"success": True, "message": "钉钉消息发送成功"}
+
+
+# ---------------------------------------------------------------------------
+# 看板页面
+# ---------------------------------------------------------------------------
+
+@router.get("/dashboard")
+async def agent_get_dashboard(
+    current_user: dict = Depends(get_agent_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """获取当前用户的公开看板地址（无需 token，可直接打开）"""
+    role = current_user["role"]
+    username = current_user["username"]
+
+    if role == "管理员":
+        title = "余杭分公司产数大单商机看板"
+        user_key = "admin"
+    elif username == "zw":
+        title = "余杭政务支局-产数大单商机看板"
+        user_key = "zw"
+    else:
+        raise HTTPException(status_code=403, detail="该用户暂无公开看板权限")
+
+    base_url = "http://124.220.19.159:3000"
+    return {
+        "title": title,
+        "url": f"{base_url}/public-dashboard/{user_key}",
+        "message": "此地址可直接在浏览器中打开，无需登录",
+    }
+
+
+# ---------------------------------------------------------------------------
+# 商机导出
+# ---------------------------------------------------------------------------
+
+class AgentExportQuery(BaseModel):
+    """导出查询条件"""
+    status: Optional[str] = None
+    keyword: Optional[str] = None
+    format: str = "json"  # json 或 csv
+
+
+@router.post("/opportunities/export")
+async def agent_export_opportunities(
+    query: AgentExportQuery,
+    current_user: dict = Depends(get_agent_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """导出商机列表数据（JSON或CSV格式）"""
+    base_query = select(Opportunity).options(
+        selectinload(Opportunity.division_member),
+        selectinload(Opportunity.account_manager),
+        selectinload(Opportunity.branch_director),
+    )
+    base_count = select(func.count(Opportunity.id))
+
+    # 按角色过滤
+    user_role = current_user["role"]
+    user_id = current_user["id"]
+    if user_role == "项目经理":
+        base_query = base_query.where(Opportunity.division_member_id == user_id)
+        base_count = base_count.where(Opportunity.division_member_id == user_id)
+    elif user_role == "客户经理":
+        base_query = base_query.where(Opportunity.account_manager_id == user_id)
+        base_count = base_count.where(Opportunity.account_manager_id == user_id)
+    elif user_role == "责任支局长":
+        base_query = base_query.where(Opportunity.branch_director_id == user_id)
+        base_count = base_count.where(Opportunity.branch_director_id == user_id)
+
+    if query.status:
+        base_query = base_query.where(Opportunity.opportunity_status == query.status)
+    if query.keyword:
+        from sqlalchemy import or_
+        kw_filter = or_(
+            Opportunity.opportunity_name.ilike(f"%{query.keyword}%"),
+            Opportunity.customer_name.ilike(f"%{query.keyword}%"),
+        )
+        base_query = base_query.where(kw_filter)
+
+    result = await db.execute(base_query.order_by(Opportunity.id.desc()))
+    opportunities = result.scalars().unique().all()
+
+    if query.format == "csv":
+        # 返回CSV格式
+        import csv
+        import io
+        output = io.StringIO()
+        writer = csv.writer(output)
+        # 写入表头
+        writer.writerow([
+            "ID", "商机名称", "客户名称", "状态", "优先级", "预测金额",
+            "支局", "项目经理", "客户经理", "责任支局长", "创建日期",
+            "最新推进时间", "未推进天数", "AI风险等级", "是否招标"
+        ])
+        # 写入数据
+        for opp in opportunities:
+            writer.writerow([
+                opp.id,
+                opp.opportunity_name,
+                opp.customer_name,
+                opp.opportunity_status or "",
+                {1: "高", 2: "中", 3: "低"}.get(opp.priority_level, ""),
+                opp.predicted_amount or "",
+                opp.branch_office or "",
+                opp.division_member.real_name if opp.division_member else "",
+                opp.account_manager.real_name if opp.account_manager else "",
+                opp.branch_director.real_name if opp.branch_director else "",
+                opp.created_date.isoformat() if opp.created_date else "",
+                opp.last_push_date.isoformat() if opp.last_push_date else "",
+                opp.no_push_days or 0,
+                opp.ai_risk_level or "",
+                "是" if opp.is_bid_required else "否",
+            ])
+        
+        from fastapi.responses import StreamingResponse
+        output.seek(0)
+        return StreamingResponse(
+            iter([output.getvalue()]),
+            media_type="text/csv",
+            headers={"Content-Disposition": "attachment; filename=opportunities.csv"}
+        )
+    else:
+        # 返回JSON格式
+        items = []
+        for opp in opportunities:
+            items.append({
+                "id": opp.id,
+                "opportunity_name": opp.opportunity_name,
+                "customer_name": opp.customer_name,
+                "opportunity_status": opp.opportunity_status,
+                "priority_level": opp.priority_level,
+                "priority_name": {1: "高", 2: "中", 3: "低"}.get(opp.priority_level, ""),
+                "predicted_amount": float(opp.predicted_amount) if opp.predicted_amount else None,
+                "branch_office": opp.branch_office,
+                "division_member": opp.division_member.real_name if opp.division_member else None,
+                "account_manager": opp.account_manager.real_name if opp.account_manager else None,
+                "branch_director": opp.branch_director.real_name if opp.branch_director else None,
+                "created_date": opp.created_date.isoformat() if opp.created_date else None,
+                "last_push_date": opp.last_push_date.isoformat() if opp.last_push_date else None,
+                "no_push_days": opp.no_push_days or 0,
+                "ai_risk_level": opp.ai_risk_level,
+                "ai_analysis_summary": opp.ai_analysis_summary,
+                "is_bid_required": opp.is_bid_required,
+                "competitor_detected": opp.competitor_detected,
+            })
+        
+        return {
+            "total": len(items),
+            "export_time": datetime.utcnow().isoformat(),
+            "items": items
+        }
+
+
+@router.get("/opportunities/export/download")
+async def agent_export_opportunities_download(
+    current_user: dict = Depends(get_agent_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """下载商机列表Excel文件"""
+    base_query = select(Opportunity).options(
+        selectinload(Opportunity.division_member),
+        selectinload(Opportunity.account_manager),
+        selectinload(Opportunity.branch_director),
+    )
+
+    # 按角色过滤
+    user_role = current_user["role"]
+    user_id = current_user["id"]
+    if user_role == "项目经理":
+        base_query = base_query.where(Opportunity.division_member_id == user_id)
+    elif user_role == "客户经理":
+        base_query = base_query.where(Opportunity.account_manager_id == user_id)
+    elif user_role == "责任支局长":
+        base_query = base_query.where(Opportunity.branch_director_id == user_id)
+
+    result = await db.execute(base_query.order_by(Opportunity.id.desc()))
+    opportunities = result.scalars().unique().all()
+
+    # 生成Excel文件
+    import tempfile
+    from app.utils.excel import export_excel
+    tmp_path = tempfile.mktemp(suffix=".xlsx")
+    await export_excel(opportunities, tmp_path)
+
+    from fastapi.responses import FileResponse
+    return FileResponse(
+        path=tmp_path,
+        filename="商机列表.xlsx",
+        media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+    )

@@ -78,12 +78,12 @@ class SchedulerService:
             "招标临近提醒检查",
         )
 
-        # 3. 超期未推进预警 — 每天 09:00
+        # 3. 超期未推进预警 — 每周（与 weekly_remind 同频）
         self._add_job(
             "no_push_warn",
             self.no_push_warn_task,
-            CronTrigger(hour=9, minute=0),
-            "超期未推进预警检查",
+            CronTrigger(day_of_week=weekday, hour=hour, minute=minute),
+            "超期未推进预警检查（每周）",
         )
 
         # 4. 优先级自动升级 — 每天 02:00（仅在配置开启时注册）
@@ -132,24 +132,30 @@ class SchedulerService:
     # ────────────────────── 业务任务实现 ──────────────────────
 
     async def daily_no_push_increment_task(self) -> dict:
-        """每天凌晨对未关闭商机 no_push_days += 1"""
+        """每天凌晨重新计算未推进天数：当前日期 - 上次推进日期"""
         logger.info("[定时任务] daily_no_push_increment — 开始执行")
         async with async_session() as db:
             try:
+                from datetime import date
+                today = date.today()
                 rows = await db.execute(
                     select(Opportunity).where(Opportunity.close_flag == 0)
                 )
                 count = 0
                 for opp in rows.scalars().all():
-                    opp.no_push_days = (opp.no_push_days or 0) + 1
+                    if opp.last_push_date:
+                        opp.no_push_days = max((today - opp.last_push_date).days, 0)
+                    else:
+                        opp.no_push_days = 0
                     count += 1
                 if count:
                     await db.flush()
-                logger.info("未推进天数已递增: %d 个商机", count)
+                    await db.commit()
+                logger.info("未推进天数已重新计算: %d 个商机", count)
                 return {
                     "task": "daily_no_push_increment",
                     "count": count,
-                    "detail": f"已为 {count} 个未关闭商机增加未推进天数",
+                    "detail": f"已为 {count} 个未关闭商机重新计算未推进天数",
                 }
             except Exception as e:
                 logger.exception("daily_no_push_increment 执行失败")
@@ -299,8 +305,8 @@ class SchedulerService:
                 return {"task": "bid_approach_check", "error": str(e)}
 
     async def no_push_warn_task(self) -> dict:
-        """超期未推进预警：
-        对未推进天数 >= 阈值 且 尚未标记预警的活跃商机发送预警邮件，并标记 no_push_flag=1
+        """超期未推进预警（每周）：
+        对未推进天数 >= 阈值的活跃商机发送预警邮件，并标记 no_push_flag=1 防重复
         """
         logger.info("[定时任务] no_push_warn — 开始执行")
         threshold = settings.NO_PUSH_WARN_DAYS or 7
@@ -316,7 +322,6 @@ class SchedulerService:
                     .where(
                         Opportunity.close_flag == 0,
                         Opportunity.no_push_days >= threshold,
-                        Opportunity.no_push_flag == 0,
                     )
                 )
                 opportunities = rows.scalars().all()
@@ -385,7 +390,7 @@ class SchedulerService:
             if not recipients:
                 return
 
-            _PRIORITY_NAMES = {1: "紧急", 2: "高", 3: "中", 4: "低"}
+            _PRIORITY_NAMES = {1: "高", 2: "中", 3: "低"}
             old_label = _PRIORITY_NAMES.get(old_priority, str(old_priority))
             new_label = _PRIORITY_NAMES.get(new_priority, str(new_priority))
 
@@ -426,45 +431,74 @@ class SchedulerService:
             )
 
     async def auto_priority_upgrade_task(self) -> dict:
-        """优先级自动升级：
-        根据未推进时长自动提升优先级（数字越小优先级越高）
-          - 未推进 >= 30 天 → 优先级 1（紧急）
-          - 未推进 >= 14 天 → 优先级 2（高）
+        """优先级自动调整：
+        根据规则自动调整商机优先级：
+          - 有竞争对手或招标7天以内 → 优先级 1（高）
+          - 无进展（no_push_days > 0）→ 优先级 3（低）
+          - 其他 → 优先级 2（中）
         同时记录 PriorityChangeLog 并发送通知邮件
         """
         logger.info("[定时任务] auto_priority_upgrade — 开始执行")
 
-        # (最小未推进天数, 目标优先级)
-        rules = [
-            (30, 1),
-            (14, 2),
-        ]
+        from datetime import date, timedelta
 
         async with async_session() as db:
             try:
                 total = 0
-                for min_days, target_priority in rules:
-                    rows = await db.execute(
-                        select(Opportunity)
-                        .options(
-                            selectinload(Opportunity.account_manager),
-                            selectinload(Opportunity.branch_director),
-                        )
-                        .where(
-                            Opportunity.close_flag == 0,
-                            Opportunity.no_push_days >= min_days,
-                            Opportunity.priority_level > target_priority,
-                        )
+                today = date.today()
+                seven_days_later = today + timedelta(days=7)
+
+                # 查询所有未关闭的商机
+                rows = await db.execute(
+                    select(Opportunity)
+                    .options(
+                        selectinload(Opportunity.account_manager),
+                        selectinload(Opportunity.branch_director),
                     )
-                    for opp in rows.scalars().all():
-                        old = opp.priority_level
-                        opp.priority_level = target_priority
+                    .where(Opportunity.close_flag == 0)
+                )
+                opportunities = rows.scalars().all()
+
+                for opp in opportunities:
+                    old_priority = opp.priority_level
+
+                    # 判断新优先级
+                    # 高优先级：有竞争对手或招标7天以内
+                    is_high = False
+                    if opp.competitor_detected:
+                        is_high = True
+                    elif opp.estimated_sign_date and today <= opp.estimated_sign_date <= seven_days_later:
+                        is_high = True
+
+                    if is_high:
+                        new_priority = 1
+                    # 低优先级：无进展
+                    elif opp.no_push_days and opp.no_push_days > 0:
+                        new_priority = 3
+                    # 中优先级：其他
+                    else:
+                        new_priority = 2
+
+                    # 如果优先级发生变化，更新并记录
+                    if old_priority != new_priority:
+                        opp.priority_level = new_priority
+                        reason = ""
+                        if new_priority == 1:
+                            if opp.competitor_detected:
+                                reason = "检测到竞争对手介入"
+                            else:
+                                reason = f"招标临近（{(opp.estimated_sign_date - today).days}天内）"
+                        elif new_priority == 3:
+                            reason = f"无进展（{opp.no_push_days}天未推进）"
+                        else:
+                            reason = "常规状态"
+
                         db.add(
                             PriorityChangeLog(
                                 opportunity_id=opp.id,
-                                old_priority=old,
-                                new_priority=target_priority,
-                                change_reason=f"未推进 ≥ {min_days} 天自动升级",
+                                old_priority=old_priority,
+                                new_priority=new_priority,
+                                change_reason=reason,
                                 changed_by="AI_SYSTEM",
                             )
                         )
@@ -472,18 +506,17 @@ class SchedulerService:
 
                         # 发送优先级变更通知邮件
                         await self._send_priority_change_email(
-                            opp, old, target_priority,
-                            f"未推进 ≥ {min_days} 天自动升级", db,
+                            opp, old_priority, new_priority, reason, db,
                         )
 
                 if total:
                     await db.flush()
 
-                logger.info("优先级自动升级完成: %d 个商机", total)
+                logger.info("优先级自动调整完成: %d 个商机", total)
                 return {
                     "task": "auto_priority_upgrade",
                     "count": total,
-                    "detail": f"已升级 {total} 个商机的优先级",
+                    "detail": f"已调整 {total} 个商机的优先级",
                 }
             except Exception as e:
                 logger.exception("auto_priority_upgrade 执行失败")

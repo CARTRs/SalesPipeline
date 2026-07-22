@@ -9,6 +9,7 @@ services:
       - "5433:5432"
     volumes:
       - postgres_data:/var/lib/postgresql/data
+      - ./postgres-init:/docker-entrypoint-initdb.d
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U sjxt -d opportunity_db"]
       interval: 10s
@@ -81,6 +82,8 @@ services:
     restart: unless-stopped
     networks:
       - sjxt_network
+
+
 
 networks:
   sjxt_network:
